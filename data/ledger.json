@@ -1,0 +1,29 @@
+{
+  "entries": [
+    {
+      "ts": "2026-06-12 19:00:00",
+      "type": "cost",
+      "amount_eur": 3146.29,
+      "method": "basetao",
+      "customer": null,
+      "items": "190 basetao orders 12 apr - 12 jun",
+      "note": "SEED: CNY 24676.06 @ 7.8429 (Rep_Database.xlsx, Basetao Orders)",
+      "source": "seed"
+    },
+    {
+      "ts": "2026-06-28 22:20:00",
+      "type": "income",
+      "amount_eur": 710,
+      "method": "cash",
+      "customer": "Book 8 batch",
+      "items": "8 sets + 13 shirts custom jerseys",
+      "note": "SEED uit Codex-historie: batchomzet, waarvan 100 al eerder ontvangen",
+      "source": "seed"
+    }
+  ],
+  "settings": {
+    "currency": "EUR",
+    "definitions": "cash = contant geld; basetao = directe storting in de basetao-portemonnee",
+    "goal": "cash-aandeel van inkomsten (~) gelijk aan winstmarge"
+  }
+}
