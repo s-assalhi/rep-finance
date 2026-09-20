@@ -474,7 +474,7 @@ button{background:#4caf7d;border:0;border-radius:8px;padding:10px;font-weight:70
 <div class="k" style="margin-top:6px">te innen: €__TEINNEN__</div></div>
 </div>
 <h1 style="font-size:17px;margin-top:30px">📋 Order- &amp; betaalstatus per order</h1>
-<table><tr><th>#</th><th>Klant</th><th>Items</th><th>€</th><th>Orderstatus</th><th>Betaalstatus</th><th>Basetao</th><th>Laatst</th></tr>
+<table><tr><th>#</th><th>Klant</th><th>Items</th><th>€</th><th>Orderstatus</th><th>Betaalstatus</th><th>Basetao</th><th>Laatst</th><th></th></tr>
 __OROWS__
 </table>
 <form onsubmit="addOrder(event)">
@@ -512,7 +512,10 @@ postOrder({customer:g('o_customer'),items:g('o_items'),price_eur:parseFloat(g('o
 async function updOrder(e){e.preventDefault();const g=i=>document.getElementById(i).value;
 const b={num:parseInt(g('u_num'))};if(g('u_os'))b.order_status=g('u_os');if(g('u_ps'))b.payment_status=g('u_ps');
 if(!g('u_num')||(!g('u_os')&&!g('u_ps'))){alert('vul order # en minstens één status in');return;}
-postOrder(b);}</script>
+postOrder(b);}
+async function delOrder(n){if(!confirm('Order #'+n+' verwijderen?'))return;
+const r=await fetch('/api/order/'+n,{method:'DELETE',headers:{'X-Access-Code':K}});
+r.ok?location.reload():alert('mislukt');}</script>
 <div class="note">Kosten tot nu toe: €__COST__ · seed-data uit Rep_Database.xlsx (Codex-historie).</div>
 </body></html>"""
 
@@ -534,13 +537,15 @@ def render_dashboard():
                           'purchase/order_img/{0}.html" target="_blank" rel="noopener">{0}</a>'
                           .format(i) for i in o.get("basetao_ids", [])) or "—"
             orows.append(
-                "<tr><td>#{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}{}</td><td>{}</td><td>{}</td></tr>".format(
+                "<tr><td>#{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}{}</td><td>{}</td><td>{}</td>"
+                "<td><button onclick=\"delOrder({})\" style=\"background:#7d3a3a;border:0;color:#fff;"
+                "border-radius:6px;cursor:pointer;padding:2px 7px\">✖</button></td></tr>".format(
                     o.get("num", ""), o.get("customer", ""), o.get("items", ""),
                     ("€%g" % o["price_eur"]) if o.get("price_eur") else "—",
                     o.get("order_status", ""),
                     o.get("payment_status", ""),
                     (" (" + o["payment_method"] + ")") if o.get("payment_method") not in (None, "onbekend") else "",
-                    bt, o.get("updated", "")))
+                    bt, o.get("updated", ""), o.get("num", "")))
     os_opts = "".join(f'<option value="{s}">{s}</option>' for s in ORDER_STATUSES)
     ps_opts = "".join(f'<option value="{s}">{s}</option>' for s in PAYMENT_STATUSES)
     gap_cls = "gap-ok" if abs(s["gap_pct"]) < 5 else "gap-bad"
@@ -557,7 +562,7 @@ def render_dashboard():
             .replace("__GAPCLS__", gap_cls)
             .replace("__OPENORDERS__", str(s["open_orders"]))
             .replace("__TEINNEN__", f"{s['te_innen']:g}")
-            .replace("__OROWS__", "\n".join(orows) or '<tr><td colspan="8">— nog geen orders —</td></tr>')
+            .replace("__OROWS__", "\n".join(orows) or '<tr><td colspan="9">— nog geen orders —</td></tr>')
             .replace("__OSOPT__", os_opts)
             .replace("__PSOPT__", ps_opts)
             .replace("__ROWS__", "\n".join(rows) or "<tr><td colspan=6>—</td></tr>"))
@@ -736,3 +741,15 @@ async def api_order(req: Request):
         hf_sync_up()
     return JSONResponse({"ok": True, "order": {k: o.get(k) for k in
                         ("num", "customer", "items", "price_eur", "order_status", "payment_status")}})
+
+@app.delete("/api/order/{num}")
+async def api_order_delete(num: int):
+    with _ledlock:
+        d = ledger_load()
+        before = len(d.get("orders", []))
+        d["orders"] = [o for o in d.get("orders", []) if o.get("num") != num]
+        if len(d["orders"]) == before:
+            return JSONResponse({"ok": False, "error": "niet gevonden"}, status_code=404)
+        ledger_save(d)
+        hf_sync_up()
+    return JSONResponse({"ok": True})
