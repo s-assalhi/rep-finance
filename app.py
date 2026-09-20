@@ -328,7 +328,7 @@ def handle_update(msg):
         return
     low = text.lower()
     if low.startswith("/basetao") or low.startswith("/orders") or low.startswith("/order ") \
-            or low.startswith("/status ") or low.startswith("/betaald"):
+            or low.startswith("/status ") or low.startswith("/betaald") or low.startswith("/klant "):
         return handle_command(chat_id, text)
     try:
         action = llm_parse(text)
@@ -409,8 +409,17 @@ def handle_command(chat_id, text):
                text=(f"💶 Order #{num}: betaald" + (f" via {meth}" if meth else "") + " ✅"
                      if o else f"❌ Order #{num} niet gevonden."))
             return
+        m = re.match(r"/klant\s+#?(\d+)\s+(.+)", low)
+        if m:
+            num, naam = int(m.group(1)), text.split(None, 2)[2].strip()
+            o = order_update(d, num, customer=naam)
+            ledger_save(d)
+            hf_sync_up()
+            tg("sendMessage", chat_id=chat_id,
+               text=(f"👤 Order #{num}: klant → {naam}" if o else f"❌ Order #{num} niet gevonden."))
+            return
         tg("sendMessage", chat_id=chat_id,
-           text="ℹ️ Gebruik: /order klant | items | bedrag · /orders · /status #1 besteld · /betaald #1 cash")
+           text="ℹ️ Gebruik: /order klant | items | bedrag · /orders · /status #1 besteld · /betaald #1 cash · /klant #1 Koppig")
 
 def poll_loop():
     offset = 0
@@ -484,6 +493,7 @@ __OROWS__
 <button>Nieuwe order</button></form>
 <form onsubmit="updOrder(event)">
 <input id="u_num" type="number" placeholder="order #">
+<input id="u_customer" placeholder="klant (optioneel)">
 <select id="u_os"><option value="">— orderstatus —</option>__OSOPT__</select>
 <select id="u_ps"><option value="">— betaalstatus —</option>__PSOPT__</select>
 <button>Status bijwerken</button></form>
@@ -511,7 +521,8 @@ async function addOrder(e){e.preventDefault();const g=i=>document.getElementById
 postOrder({customer:g('o_customer'),items:g('o_items'),price_eur:parseFloat(g('o_price')||'0')});}
 async function updOrder(e){e.preventDefault();const g=i=>document.getElementById(i).value;
 const b={num:parseInt(g('u_num'))};if(g('u_os'))b.order_status=g('u_os');if(g('u_ps'))b.payment_status=g('u_ps');
-if(!g('u_num')||(!g('u_os')&&!g('u_ps'))){alert('vul order # en minstens één status in');return;}
+if(g('u_customer'))b.customer=g('u_customer');
+if(!g('u_num')||(!g('u_os')&&!g('u_ps')&&!g('u_customer'))){alert('vul order # en minstens één veld in');return;}
 postOrder(b);}
 async function delOrder(n){if(!confirm('Order #'+n+' verwijderen?'))return;
 const r=await fetch('/api/order/'+n,{method:'DELETE',headers:{'X-Access-Code':K}});
@@ -728,7 +739,10 @@ async def api_order(req: Request):
         if b.get("num"):
             o = order_update(d, int(b["num"]), order_status=b.get("order_status"),
                              payment_status=b.get("payment_status"),
-                             payment_method=b.get("payment_method"))
+                             payment_method=b.get("payment_method"),
+                             customer=b.get("customer"),
+                             items=b.get("items"),
+                             price_eur=b.get("price_eur"))
             if not o:
                 return JSONResponse({"ok": False, "error": "order niet gevonden"}, status_code=404)
         else:
