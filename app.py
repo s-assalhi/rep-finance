@@ -39,6 +39,7 @@ HF_DATASET = os.environ.get("HF_DATASET", "").strip()
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip()  # dashboard-gate op publieke Space
 BASETAO_COOKIE = os.environ.get("BASETAO_COOKIE", "").strip()  # DevTools cookie voor /basetao sync
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()  # gratis ASR: whisper-large-v3
 
 ORDER_STATUSES = ["interesse", "info_gevraagd", "prijs_gegeven", "wacht_op_antwoord",
                   "te_bestellen", "besteld", "onderweg", "binnen", "verpakken", "klaar",
@@ -202,6 +203,17 @@ def apply_action(a, raw):
 _whisper = None
 
 def transcribe(path):
+    if GROQ_API_KEY:
+        with open(path, "rb") as f:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": ("audio.ogg", f, "audio/ogg")},
+                data={"model": "whisper-large-v3", "language": "nl",
+                      "response_format": "json"},
+                timeout=120)
+        r.raise_for_status()
+        return (r.json().get("text") or "").strip()
     global _whisper
     if _whisper is None:
         from faster_whisper import WhisperModel
