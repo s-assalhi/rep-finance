@@ -485,7 +485,7 @@ button{background:#4caf7d;border:0;border-radius:8px;padding:10px;font-weight:70
 <div class="card"><div class="k">Cash</div><div class="v">€__CASH__</div>
 <div class="bar"><span class="cash" style="width:__CASH_PCT__%"></span><span class="wallet" style="width:__WALLET_PCT__%"></span></div>
 <div class="k" style="margin-top:6px">__CASH_PCT__% van inkomsten</div></div>
-<div class="card"><div class="k">Basetao portemonnee</div><div class="v">€__WALLET__</div>
+<div class="card"><div class="k">Basetao-inkomsten</div><div class="v">€__WALLET__</div>
 <div class="k" style="margin-top:6px">__WALLET_PCT__% van inkomsten</div></div>
 <div class="card"><div class="k">Winstmarge</div><div class="v">__MARGIN__%</div>
 <div class="k" style="margin-top:6px">€__PROFIT__ winst op €__INCOME__</div></div>
@@ -493,7 +493,7 @@ button{background:#4caf7d;border:0;border-radius:8px;padding:10px;font-weight:70
 <div class="k" style="margin-top:6px">doel: ~0 (cash aandeel volgt winst)</div></div>
 <div class="card"><div class="k">Open orders</div><div class="v">__OPENORDERS__</div>
 <div class="k" style="margin-top:6px">te innen: €__TEINNEN__</div></div>
-<div class="card"><div class="k">Basetao portemonnee</div><div class="v">¥__BTBAL__</div>
+<div class="card"><div class="k">Basetao saldo (live)</div><div class="v">¥__BTBAL__</div>
 <div class="k" style="margin-top:6px">__BTCNT__</div></div>
 </div>
 <h1 style="font-size:17px;margin-top:30px">📋 Order- &amp; betaalstatus per order</h1>
