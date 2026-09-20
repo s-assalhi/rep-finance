@@ -16,6 +16,7 @@ Env vars (set as Space secrets):
   HF_DATASET       optional  - "username/rep-ledger" private dataset for backup
   HF_TOKEN         optional  - HF write token, needed only for HF_DATASET sync
 """
+import asyncio
 import json
 import os
 import re
@@ -233,6 +234,26 @@ def llm_parse(text):
     content = r.json()["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", content, re.S)
     return json.loads(m.group(0) if m else content)
+
+EXTRACT_PROMPT = """Haal uit deze Basetao-orderlijst alle producten. Antwoord ONLY met een JSON-array, geen andere tekst:
+[{"order_id":"1936771","title":"productnaam","price_cny":123.45}]
+- order_id = het Basetao-ordernummer bij het product (alleen cijfers)
+- title = de product/mdl-omschrijving
+- price_cny = de prijs in CNY-nummer (null als niet vermeld)
+Sla dubbelloopse kopregels/paginering over. Geen producten? antwoord []"""
+
+def llm_extract_products(text):
+    r = requests.post(
+        f"{LLM_BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+        json={"model": LLM_MODEL, "temperature": 0,
+              "messages": [{"role": "system", "content": EXTRACT_PROMPT},
+                           {"role": "user", "content": text[:14000]}]},
+        timeout=150)
+    r.raise_for_status()
+    content = r.json()["choices"][0]["message"]["content"]
+    m = re.search(r"\[.*\]", content, re.S)
+    return json.loads(m.group(0) if m else "[]")
 
 # ---------------- telegram ----------------
 def tg(method, **kw):
@@ -649,6 +670,50 @@ async def api_basetao(req: Request):
         ledger_save(d)
         hf_sync_up()
     return JSONResponse({"ok": True})
+
+@app.post("/api/basetao/import")
+async def api_basetao_import(req: Request):
+    """Bridge: paginatext van basetao -> GLM -> orderregels (klant onbekend)."""
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "ongeldige json"}, status_code=400)
+    text = (b.get("text") or "").strip()
+    page = b.get("page") or ("arrived" if "arrived" in (b.get("url") or "") else "ordered")
+    if len(text) < 50:
+        return JSONResponse({"ok": False, "error": "te weinig tekst"}, status_code=400)
+    if not LLM_API_KEY:
+        return JSONResponse({"ok": False, "error": "LLM_API_KEY ontbreekt"}, status_code=400)
+    try:
+        products = await asyncio.to_thread(llm_extract_products, text)
+    except Exception as e:  # noqa: BLE001
+        print("extract error:", e)
+        return JSONResponse({"ok": False, "error": "extractie mislukt"}, status_code=502)
+    status = "binnen" if page == "arrived" else "besteld"
+    created, skipped = [], 0
+    with _ledlock:
+        d = ledger_load()
+        existing = {str(bid) for o in d.get("orders", []) for bid in o.get("basetao_ids", [])}
+        for p in products if isinstance(products, list) else []:
+            if not isinstance(p, dict):
+                continue
+            bid = str(p.get("order_id") or "").strip()
+            title = str(p.get("title") or "")[:120]
+            if not title:
+                continue
+            if bid and bid in existing:
+                skipped += 1
+                continue
+            o = order_add(d, "onbekend", title, 0, basetao_ids=[bid] if bid else [],
+                          note=f"basetao {page}, kosten ¥{p.get('price_cny') or '?'}")
+            order_update(d, o["num"], order_status=status)
+            if bid:
+                existing.add(bid)
+            created.append(o["num"])
+        ledger_save(d)
+        hf_sync_up()
+    return JSONResponse({"ok": True, "page": page, "aangemaakt": created,
+                         "overslaan_duplicaat": skipped})
 
 @app.post("/api/order")
 async def api_order(req: Request):
