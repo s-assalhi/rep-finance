@@ -24,6 +24,7 @@ import time
 
 import requests
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # ---------------- config ----------------
@@ -253,23 +254,28 @@ def tg_download(file_id):
         return None
 
 def basetao_snapshot():
-    """Account-tellers + saldo van basetao (server-rendered HTML, sessiecookie nodig)."""
+    """Basetao-sessie testen + wat er server-side leesbaar is (raw HTML)."""
     headers = {
         "Cookie": BASETAO_COOKIE,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
         "Referer": "https://www.basetao.com/",
+        "Accept": "text/html",
     }
     r = requests.get(
         "https://www.basetao.com/best-taobao-agent-service/my_account/welcome.html",
         headers=headers, timeout=30)
     t = r.text
-    if "Welcome back" not in t:
-        return None
+    logged_in = "Welcome back" in t and "Login" not in t[:3000]
     m = re.search(r'bi-currency-yen[\s\S]{0,150}?>\s*([\d.,]+)\s*<', t)
     counters = dict(re.findall(
         r'id="(Ordered|Arrived|Cancelled|Shipped|Searching|Received|Pending)"'
         r'[\s\S]{0,300}?badge[^>]*>\s*(\d+)\s*</span>', t))
-    return {"balance_cny": m.group(1) if m else "?", "counters": counters}
+    return {"logged_in": logged_in, "http": r.status_code,
+            "balance_cny": m.group(1) if m else None,
+            "counters": counters,
+            "note": "tellers/saldo worden door basetao via JS geladen; "
+                    "gebruik de browser-bridge voor volledige data"}
 
 def handle_update(msg):
     chat_id = msg["chat"]["id"]
@@ -320,11 +326,11 @@ def handle_command(chat_id, text):
             return
         tg("sendChatAction", chat_id=chat_id, action="typing")
         snap = basetao_snapshot()
-        if not snap:
+        if not snap or not snap.get("logged_in"):
             tg("sendMessage", chat_id=chat_id,
-               text="⚠️ Basetao-cookie verlopen — ververs hem en update het secret.")
+               text="⚠️ Basetao-cookie verlopen of geblokkeerd — ververs hem (Copy as cURL → mij sturen).")
             return
-        c = snap["counters"]
+        c = snap.get("counters", {})
         tg("sendMessage", chat_id=chat_id,
            text=(f"📦 Basetao — saldo ¥{snap['balance_cny']}\n"
                  f"Ordered {c.get('Ordered', '?')} | Arrived {c.get('Arrived', '?')} | "
@@ -536,6 +542,8 @@ def render_dashboard():
             .replace("__ROWS__", "\n".join(rows) or "<tr><td colspan=6>—</td></tr>"))
 
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
 
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
@@ -592,6 +600,30 @@ def orders():
     with _ledlock:
         d = ledger_load()
     return JSONResponse({"orders": d.get("orders", [])})
+
+@app.get("/basetao")
+def basetao_route():
+    if not BASETAO_COOKIE:
+        return JSONResponse({"ok": False, "error": "BASETAO_COOKIE niet ingesteld"}, status_code=400)
+    snap = basetao_snapshot()
+    return JSONResponse({"ok": bool(snap and snap.get("logged_in")), **(snap or {})})
+
+@app.post("/api/basetao")
+async def api_basetao(req: Request):
+    """Browser-bridge: de ingelogde basetao-tab post hier haar dashboard-data."""
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "ongeldige json"}, status_code=400)
+    with _ledlock:
+        d = ledger_load()
+        d.setdefault("entries", []).append({
+            "ts": _now(), "type": "note",
+            "note": "basetao-sync: " + json.dumps(b, ensure_ascii=False)[:900],
+            "source": "basetao-bridge"})
+        ledger_save(d)
+        hf_sync_up()
+    return JSONResponse({"ok": True})
 
 @app.post("/api/order")
 async def api_order(req: Request):
