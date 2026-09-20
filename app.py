@@ -608,6 +608,31 @@ def basetao_route():
     snap = basetao_snapshot()
     return JSONResponse({"ok": bool(snap and snap.get("logged_in")), **(snap or {})})
 
+def basetao_fetch(path):
+    headers = {
+        "Cookie": BASETAO_COOKIE,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+        "Referer": "https://www.basetao.com/best-taobao-agent-service/my_account/welcome.html",
+        "Accept": "text/html",
+    }
+    r = requests.get("https://www.basetao.com/best-taobao-agent-service/my_account/" + path,
+                     headers=headers, timeout=40)
+    return r.text if r.status_code == 200 else ""
+
+@app.get("/basetao/rows")
+def basetao_rows():
+    """Debug: structuur van de orderlijst-pagina's zoals de server ze ziet."""
+    out = {}
+    for name, page in (("ordered", "order/ordered.html"), ("arrived", "order/arrived.html")):
+        t = basetao_fetch(page)
+        regions = []
+        for m in list(re.finditer(r'order_img', t))[:4]:
+            regions.append(t[max(0, m.start() - 700):m.start() + 400])
+        out[name] = {"len": len(t), "has_login": "Login" in t[:3000],
+                     "n_order_img": t.count("order_img"), "regions": regions}
+    return JSONResponse(out)
+
 @app.post("/api/basetao")
 async def api_basetao(req: Request):
     """Browser-bridge: de ingelogde basetao-tab post hier haar dashboard-data."""
