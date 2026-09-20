@@ -1,0 +1,394 @@
+"""
+Rep Finance — Telegram voice bot + web dashboard in one process.
+Designed for a free Hugging Face Docker Space (CPU).
+
+Flow:  Telegram voice (NL) -> faster-whisper ASR -> GLM (OpenAI-compatible)
+       -> JSON action -> ledger (data/ledger.json, optional HF Dataset sync)
+       -> Dutch confirmation reply + live dashboard on "/".
+
+Env vars (set as Space secrets):
+  TELEGRAM_TOKEN   required  - from @BotFather
+  LLM_API_KEY      required  - Z.ai / OpenAI-compatible key
+  LLM_BASE_URL     optional  - default https://api.z.ai/api/coding/paas/v4
+  LLM_MODEL        optional  - default glm-4.6
+  WHISPER_MODEL    optional  - tiny | base (default) | small
+  LEDGER_PATH      optional  - default data/ledger.json
+  HF_DATASET       optional  - "username/rep-ledger" private dataset for backup
+  HF_TOKEN         optional  - HF write token, needed only for HF_DATASET sync
+"""
+import json
+import os
+import re
+import threading
+import time
+
+import requests
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+
+# ---------------- config ----------------
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "").strip()
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.z.ai/api/coding/paas/v4").rstrip("/")
+LLM_MODEL = os.environ.get("LLM_MODEL", "glm-4.6")
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")
+LEDGER_PATH = os.environ.get("LEDGER_PATH", "data/ledger.json")
+HF_DATASET = os.environ.get("HF_DATASET", "").strip()
+HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
+ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip()  # dashboard-gate op publieke Space
+
+API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+_ledlock = threading.Lock()
+
+# ---------------- ledger ----------------
+def ledger_load():
+    with open(LEDGER_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def ledger_save(d):
+    os.makedirs(os.path.dirname(LEDGER_PATH) or ".", exist_ok=True)
+    with open(LEDGER_PATH, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+
+def hf_sync_up():
+    """Mirror the ledger to a private HF Dataset so restarts lose nothing."""
+    if not (HF_DATASET and HF_TOKEN):
+        return
+    try:
+        from huggingface_hub import HfApi
+        HfApi(token=HF_TOKEN).upload_file(
+            path_or_fileobj=LEDGER_PATH, path_in_repo="ledger.json",
+            repo_id=HF_DATASET, repo_type="dataset")
+    except Exception as e:  # noqa: BLE001
+        print("hf sync up failed:", e)
+
+def hf_sync_down():
+    """On cold boot, restore the ledger from the HF Dataset if local is gone."""
+    if not (HF_DATASET and HF_TOKEN) or os.path.exists(LEDGER_PATH):
+        return
+    try:
+        import shutil
+        from huggingface_hub import hf_hub_download
+        p = hf_hub_download(repo_id=HF_DATASET, repo_type="dataset",
+                            filename="ledger.json", token=HF_TOKEN)
+        os.makedirs(os.path.dirname(LEDGER_PATH) or ".", exist_ok=True)
+        shutil.copy(p, LEDGER_PATH)
+        print("ledger restored from HF dataset")
+    except Exception as e:  # noqa: BLE001
+        print("hf sync down failed:", e)
+
+def compute_stats(d):
+    inc_cash = inc_wallet = cost = 0.0
+    for e in d["entries"]:
+        try:
+            a = float(e.get("amount_eur") or 0)
+        except (TypeError, ValueError):
+            continue
+        if e.get("type") == "income":
+            if e.get("method") == "cash":
+                inc_cash += a
+            else:
+                inc_wallet += a
+        elif e.get("type") == "cost":
+            cost += a
+    income = inc_cash + inc_wallet
+    profit = income - cost
+    margin = (profit / income * 100.0) if income else 0.0
+    cash_pct = (inc_cash / income * 100.0) if income else 0.0
+    return dict(
+        inc_cash=round(inc_cash, 2), inc_wallet=round(inc_wallet, 2),
+        income=round(income, 2), cost=round(cost, 2), profit=round(profit, 2),
+        margin_pct=round(margin, 1), cash_pct=round(cash_pct, 1),
+        wallet_pct=round(100 - cash_pct, 1),
+        gap_pct=round(cash_pct - margin, 1))
+
+def stats_text_nl():
+    s = compute_stats(ledger_load())
+    return (f"📊 Cash €{s['inc_cash']:g} ({s['cash_pct']}%) | "
+            f"Basetao €{s['inc_wallet']:g} ({s['wallet_pct']}%)\n"
+            f"💰 Inkomsten €{s['income']:g} − kosten €{s['cost']:g} = "
+            f"€{s['profit']:g} (marge {s['margin_pct']}%)\n"
+            f"🎯 Cash% − marge% verschil: {s['gap_pct']} pct-punt"
+            + (" ✅ in balans" if abs(s['gap_pct']) < 5 else ""))
+
+def apply_action(a, raw):
+    t = a.get("type", "note")
+    if t == "query":
+        return stats_text_nl()
+    amt = a.get("amount_eur")
+    with _ledlock:
+        d = ledger_load()
+        if t in ("income", "cost") and amt:
+            entry = {
+                "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "type": t, "amount_eur": float(amt),
+                "method": a.get("method") or ("cash" if t == "income" else "basetao"),
+                "customer": a.get("customer"), "items": a.get("items"),
+                "note": a.get("note") or raw, "source": "telegram",
+            }
+            d["entries"].append(entry)
+            ledger_save(d)
+            s = compute_stats(d)
+            hf_sync_up()
+            if t == "income":
+                meth = "cash" if entry["method"] == "cash" else "basetao-portemonnee"
+                who = f" van {entry['customer']}" if entry.get("customer") else ""
+                return (f"✅ Inkomsten bijgeschreven: €{amt:g} ({meth}){who}\n"
+                        f"📊 Cash {s['cash_pct']}% | Basetao {s['wallet_pct']}% | "
+                        f"Marge {s['margin_pct']}%")
+            return (f"✅ Kosten geboekt: €{amt:g}\n"
+                    f"📊 Inkomsten €{s['income']:g} vs kosten €{s['cost']:g} → "
+                    f"marge {s['margin_pct']}%")
+        d["entries"].append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                             "type": "note", "note": raw, "source": "telegram"})
+        ledger_save(d)
+        hf_sync_up()
+        return "📝 Notitie opgeslagen."
+
+# ---------------- ASR (faster-whisper, local CPU) ----------------
+_whisper = None
+
+def transcribe(path):
+    global _whisper
+    if _whisper is None:
+        from faster_whisper import WhisperModel
+        print("loading whisper model:", WHISPER_MODEL)
+        _whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    segs, _ = _whisper.transcribe(path, language="nl", beam_size=1)
+    return " ".join(s.text.strip() for s in segs).strip()
+
+# ---------------- LLM (OpenAI-compatible) ----------------
+SCHEMA_PROMPT = """Je zet Nederlandse berichten om naar bookhoud-acties. Antwoord ONLY met JSON, geen andere tekst:
+{"type":"income|cost|query|note","amount_eur":number|null,"method":"cash|basetao"|null,"customer":string|null,"items":string|null,"note":string|null}
+Regels:
+- "cash" = contant geld (physical euro cash). "basetao" = directe betaling in de basetao-portemonnee.
+- amount_eur altijd in euro's (converteer "lek"/"bale"/"lak" naar eur getal).
+- type=query als er om totalen/overzicht gevraagd wordt; type=note als het geen inkomsten/kosten/vraag is.
+- customer = wie betaalt/gaf opdracht; items = wat is er gekocht."""
+
+def llm_parse(text):
+    if not LLM_API_KEY:
+        return {"type": "note", "note": text}
+    r = requests.post(
+        f"{LLM_BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+        json={"model": LLM_MODEL, "temperature": 0,
+              "messages": [{"role": "system", "content": SCHEMA_PROMPT},
+                           {"role": "user", "content": text}]},
+        timeout=60)
+    r.raise_for_status()
+    content = r.json()["choices"][0]["message"]["content"]
+    m = re.search(r"\{.*\}", content, re.S)
+    return json.loads(m.group(0) if m else content)
+
+# ---------------- telegram ----------------
+def tg(method, **kw):
+    try:
+        requests.post(f"{API}/{method}", json=kw, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        print("tg error:", method, e)
+
+def tg_download(file_id):
+    try:
+        r = requests.get(f"{API}/getFile", params={"file_id": file_id}, timeout=30).json()
+        path = r["result"]["file_path"]
+        local = os.path.join("/tmp", f"voice_{int(time.time())}.ogg")
+        with open(local, "wb") as f:
+            f.write(requests.get(f"{API}/file/{path}", timeout=120).content)
+        return local
+    except Exception as e:  # noqa: BLE001
+        print("download error:", e)
+        return None
+
+def handle_update(msg):
+    chat_id = msg["chat"]["id"]
+    media = msg.get("voice") or msg.get("audio") or msg.get("document")
+    if media:
+        tg("sendChatAction", chat_id=chat_id, action="typing")
+        path = tg_download(media["file_id"])
+        if not path:
+            tg("sendMessage", chat_id=chat_id, text="❌ Kon voicebestand niet ophalen.")
+            return
+        try:
+            text = transcribe(path)
+        except Exception as e:  # noqa: BLE001
+            print("asr error:", e)
+            tg("sendMessage", chat_id=chat_id, text="❌ Spraakherkenning mislukt.")
+            return
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        if not text:
+            tg("sendMessage", chat_id=chat_id, text="❓ Geen spraak herkend.")
+            return
+        tg("sendMessage", chat_id=chat_id, text=f"🎙️ \"{text}\"")
+    elif msg.get("text"):
+        text = msg["text"].strip()
+    else:
+        return
+    try:
+        action = llm_parse(text)
+    except Exception as e:  # noqa: BLE001
+        print("llm error:", e)
+        tg("sendMessage", chat_id=chat_id, text="❌ Kon de opdracht niet verwerken.")
+        return
+    tg("sendMessage", chat_id=chat_id, text=apply_action(action, text))
+
+def poll_loop():
+    offset = 0
+    print("telegram polling started, token set:", bool(TELEGRAM_TOKEN))
+    while True:
+        if not TELEGRAM_TOKEN:
+            time.sleep(30)
+            continue
+        try:
+            r = requests.get(
+                f"{API}/getUpdates",
+                params={"timeout": 25, "offset": offset,
+                        "allowed_updates": json.dumps(["message"])},
+                timeout=35)
+            for u in r.json().get("result", []):
+                offset = u["update_id"] + 1
+                try:
+                    handle_update(u.get("message") or {})
+                except Exception as e:  # noqa: BLE001
+                    print("handle error:", e)
+        except Exception as e:  # noqa: BLE001
+            print("poll error:", e)
+            time.sleep(5)
+
+# ---------------- web dashboard ----------------
+DASH = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>Rep Finance</title><style>
+body{font-family:system-ui,Segoe UI,sans-serif;background:#0f1716;color:#e8efec;margin:0;padding:24px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:#8aa39c;font-size:13px;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;max-width:980px}
+.card{background:#182522;border:1px solid #24382f;border-radius:12px;padding:16px}
+.k{color:#8aa39c;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.v{font-size:26px;font-weight:700;margin-top:6px}
+.bar{height:14px;border-radius:7px;overflow:hidden;display:flex;margin-top:10px;background:#0c1210}
+.bar span{height:100%}.cash{background:#4caf7d}.wallet{background:#3d7dd8}
+.gap-ok{color:#4caf7d}.gap-bad{color:#e0a13d}
+table{width:100%;max-width:980px;border-collapse:collapse;margin-top:22px;font-size:13px}
+td,th{padding:7px 9px;border-bottom:1px solid #1e2f28;text-align:left}
+th{color:#8aa39c;font-weight:600}form{margin-top:26px;max-width:980px;background:#182522;
+border:1px solid #24382f;border-radius:12px;padding:16px;display:grid;
+grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+input,select{background:#0c1210;border:1px solid #2b463c;color:#e8efec;border-radius:8px;padding:8px;width:100%}
+button{background:#4caf7d;border:0;border-radius:8px;padding:10px;font-weight:700;cursor:pointer}
+.note{color:#8aa39c;font-size:12px;margin-top:18px;max-width:980px}
+</style></head><body>
+<h1>💶 Rep Finance — cash vs basetao</h1>
+<div class="sub">live · verversen elke 60s · stuur stemberichten naar je Telegram bot</div>
+<div class="grid">
+<div class="card"><div class="k">Cash</div><div class="v">€__CASH__</div>
+<div class="bar"><span class="cash" style="width:__CASH_PCT__%"></span><span class="wallet" style="width:__WALLET_PCT__%"></span></div>
+<div class="k" style="margin-top:6px">__CASH_PCT__% van inkomsten</div></div>
+<div class="card"><div class="k">Basetao portemonnee</div><div class="v">€__WALLET__</div>
+<div class="k" style="margin-top:6px">__WALLET_PCT__% van inkomsten</div></div>
+<div class="card"><div class="k">Winstmarge</div><div class="v">__MARGIN__%</div>
+<div class="k" style="margin-top:6px">€__PROFIT__ winst op €__INCOME__</div></div>
+<div class="card"><div class="k">Cash% vs marge%</div><div class="v __GAPCLS__">__GAP__ pp</div>
+<div class="k" style="margin-top:6px">doel: ~0 (cash aandeel volgt winst)</div></div>
+</div>
+<table><tr><th>Datum</th><th>Type</th><th>€</th><th>Methode</th><th>Klant</th><th>Notitie</th></tr>
+__ROWS__
+</table>
+<form onsubmit="add(event)">
+<input id="f_amount" type="number" step="0.01" placeholder="bedrag €">
+<select id="f_type"><option value="income">inkomsten</option><option value="cost">kosten</option></select>
+<select id="f_method"><option value="cash">cash</option><option value="basetao">basetao</option></select>
+<input id="f_customer" placeholder="klant">
+<input id="f_note" placeholder="notitie">
+<button>Toevoegen</button></form>
+<script>const K=new URLSearchParams(location.search).get('key')||(document.cookie.split('; ').find(r=>r.startsWith('key='))||'').slice(4)||'';
+if(K)document.cookie='key='+K+';path=/;max-age=31536000';
+async function add(e){e.preventDefault();const g=i=>document.getElementById(i).value;
+const r=await fetch('/api/entry',{method:'POST',headers:{'Content-Type':'application/json','X-Access-Code':K},
+body:JSON.stringify({type:g('f_type'),amount_eur:parseFloat(g('f_amount')),
+method:g('f_method'),customer:g('f_customer')||null,note:g('f_note')||null})});
+r.ok?location.reload():alert('mislukt');}</script>
+<div class="note">Kosten tot nu toe: €__COST__ · seed-data uit Rep_Database.xlsx (Codex-historie).</div>
+</body></html>"""
+
+def render_dashboard():
+    with _ledlock:
+        d = ledger_load()
+        s = compute_stats(d)
+        rows = []
+        for e in reversed(d["entries"][-25:]):
+            rows.append(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+                    e.get("ts", ""), e.get("type", ""),
+                    ("€%g" % e["amount_eur"]) if e.get("amount_eur") else "—",
+                    e.get("method") or "—", e.get("customer") or "—",
+                    (e.get("note") or "")[:80]))
+    gap_cls = "gap-ok" if abs(s["gap_pct"]) < 5 else "gap-bad"
+    return (DASH
+            .replace("__CASH__", f"{s['inc_cash']:g}")
+            .replace("__WALLET__", f"{s['inc_wallet']:g}")
+            .replace("__CASH_PCT__", str(s["cash_pct"]))
+            .replace("__WALLET_PCT__", str(s["wallet_pct"]))
+            .replace("__MARGIN__", str(s["margin_pct"]))
+            .replace("__PROFIT__", f"{s['profit']:g}")
+            .replace("__INCOME__", f"{s['income']:g}")
+            .replace("__COST__", f"{s['cost']:g}")
+            .replace("__GAP__", str(s["gap_pct"]))
+            .replace("__GAPCLS__", gap_cls)
+            .replace("__ROWS__", "\n".join(rows) or "<tr><td colspan=6>—</td></tr>"))
+
+app = FastAPI()
+
+@app.middleware("http")
+async def access_gate(request: Request, call_next):
+    if ACCESS_CODE and request.url.path != "/healthz":
+        code = (request.query_params.get("key")
+                or request.headers.get("x-access-code")
+                or request.cookies.get("key"))
+        if code != ACCESS_CODE:
+            return JSONResponse({"error": "toegang geweigerd: voeg ?key=... toe"},
+                                status_code=401)
+    return await call_next(request)
+
+@app.on_event("startup")
+def _start():
+    hf_sync_down()
+    threading.Thread(target=poll_loop, daemon=True).start()
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return render_dashboard()
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "bot_configured": bool(TELEGRAM_TOKEN)}
+
+@app.get("/stats")
+def stats():
+    with _ledlock:
+        d = ledger_load()
+    return JSONResponse({"stats": compute_stats(d),
+                         "recent": list(reversed(d["entries"][-25:]))})
+
+@app.post("/api/entry")
+async def api_entry(req: Request):
+    b = await req.json()
+    t, amt = b.get("type"), b.get("amount_eur")
+    if t not in ("income", "cost") or not amt:
+        return JSONResponse({"ok": False, "error": "type of bedrag ongeldig"}, status_code=400)
+    with _ledlock:
+        d = ledger_load()
+        d["entries"].append({
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "type": t,
+            "amount_eur": float(amt),
+            "method": b.get("method") or ("cash" if t == "income" else "basetao"),
+            "customer": b.get("customer"), "items": None,
+            "note": b.get("note") or "website", "source": "website"})
+        ledger_save(d)
+        s = compute_stats(d)
+        hf_sync_up()
+    return JSONResponse({"ok": True, "stats": s})
