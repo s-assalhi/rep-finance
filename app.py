@@ -268,15 +268,25 @@ Regels:
 - type=query als er om totalen/overzicht gevraagd wordt; type=note als het geen inkomsten/kosten/bestelling/vraag is.
 - customer = wie betaalt/gaf opdracht; items = wat is er gekocht/besteld."""
 
-def llm_chat(messages, timeout=150):
-    """Chat-completions met fallback: eerst met thinking-param, dan minimaal."""
+def llm_chat(messages, tools=None, timeout=150):
+    """Chat-completions; geeft het volledige assistant-message terug.
+    Fallback: eerst met thinking-param, dan minimaal."""
     if not LLM_API_KEY:
         raise RuntimeError("LLM_API_KEY ontbreekt")
     headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
-    attempts = [{"model": LLM_MODEL, "temperature": 0, "messages": messages}]
+    attempts = []
+    a1 = {"model": LLM_MODEL, "temperature": 0, "messages": messages}
+    if tools:
+        a1["tools"] = tools
+        a1["tool_choice"] = "auto"
     if LLM_THINKING in ("enabled", "disabled"):
-        attempts[0]["thinking"] = {"type": LLM_THINKING}
-    attempts.append({"model": LLM_MODEL, "messages": messages})
+        a1["thinking"] = {"type": LLM_THINKING}
+    attempts.append(a1)
+    a2 = {"model": LLM_MODEL, "messages": messages}
+    if tools:
+        a2["tools"] = tools
+        a2["tool_choice"] = "auto"
+    attempts.append(a2)
     last_err = None
     for payload in attempts:
         try:
@@ -286,9 +296,191 @@ def llm_chat(messages, timeout=150):
             last_err = str(e)
             continue
         if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"]
+            return r.json()["choices"][0]["message"]
         last_err = f"HTTP {r.status_code}: {r.text[:200]}"
     raise RuntimeError(last_err)
+
+TOOLS = [
+    {"type": "function", "function": {
+        "name": "add_income",
+        "description": "Registreer ontvangen geld van een klant (contant of direct in de basetao-portemonnee).",
+        "parameters": {"type": "object", "properties": {
+            "amount_eur": {"type": "number", "description": "bedrag in euro"},
+            "method": {"type": "string", "enum": ["cash", "basetao"]},
+            "customer": {"type": "string"},
+            "note": {"type": "string"}},
+            "required": ["amount_eur", "method"]}}},
+    {"type": "function", "function": {
+        "name": "add_cost",
+        "description": "Registreer een uitgave (bijv. inkoop via basetao of andere kosten).",
+        "parameters": {"type": "object", "properties": {
+            "amount_eur": {"type": "number"}, "note": {"type": "string"}},
+            "required": ["amount_eur"]}}},
+    {"type": "function", "function": {
+        "name": "create_order",
+        "description": "Nieuwe order aanmaken voor een klant (nog niet betaald).",
+        "parameters": {"type": "object", "properties": {
+            "customer": {"type": "string"}, "items": {"type": "string"},
+            "price_eur": {"type": "number"}},
+            "required": ["customer"]}}},
+    {"type": "function", "function": {
+        "name": "update_order",
+        "description": "Order bijwerken (betaalstatus, orderstatus, klant, items, prijs). "
+                       "Orderstatus: interesse, info_gevraagd, prijs_gegeven, wacht_op_antwoord, "
+                       "te_bestellen, besteld, onderweg, binnen, verpakken, klaar, geen_interesse. "
+                       "Betaalstatus: nog_niet_betaald, deels_betaald, betaald.",
+        "parameters": {"type": "object", "properties": {
+            "num": {"type": "integer"},
+            "order_status": {"type": "string"},
+            "payment_status": {"type": "string"},
+            "payment_method": {"type": "string", "enum": ["cash", "basetao"]},
+            "customer": {"type": "string"}, "items": {"type": "string"},
+            "price_eur": {"type": "number"}},
+            "required": ["num"]}}},
+    {"type": "function", "function": {
+        "name": "delete_order",
+        "description": "Order permanent verwijderen.",
+        "parameters": {"type": "object", "properties": {"num": {"type": "integer"}},
+                       "required": ["num"]}}},
+    {"type": "function", "function": {
+        "name": "list_orders",
+        "description": "Laatste orders met order- en betaalstatus.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "get_stats",
+        "description": "Totalen: cash vs basetao inkomsten, kosten, winstmarge, open orders, te innen.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "basetao_status",
+        "description": "Live basetao-portemonneesaldo en ordertellers.",
+        "parameters": {"type": "object", "properties": {}}}},
+]
+
+SYSTEM_AGENT = """Je bent Rep Agent, de boekhoudmaat van Younes: hij verkoopt reps (kleding, sneakers, sets) via Snapchat en Telegram en inkoopt via basetao. Je praat in zijn taal: kort, casual, Nederlands, max ~4 regels, emoji's zijn oké.
+
+Werkwijze:
+- Voeg geld, kosten en orders direct toe of werk ze bij met de tools. Vraag niet om toestemming voor iets wat duidelijk is.
+- Als een klant betaalt voor een bestaande order: markeer die order betaald (update_order met num als je hem weet) EN registreer het geld (add_income).
+- Als bedrag, methode (cash vs basetao) of product onduidelijk is: stel maximaal één korte doorvraag. Probeer verder zelf in te schatten.
+- Maten: vraag lengte/gewicht als iemand onduidelijk is over maat.
+- Bij "hoeveel/wat is mijn stand"-vragen: gebruik get_stats (en basetao_status) en vat samen.
+- Vermeld aan het eind kort wat je hebt gedaan of wat openstaat."""
+
+_chatmem = {}
+
+def agent_reply(chat_id, text):
+    """Interactieve agent-loop met toolgebruik en gespreksgeheugen per chat."""
+    hist = _chatmem.setdefault(chat_id, [])
+    hist.append({"role": "user", "content": text})
+    messages = [{"role": "system", "content": SYSTEM_AGENT}] + hist[-16:]
+    answer = None
+    for _ in range(5):
+        msg = llm_chat(messages, tools=TOOLS)
+        messages.append(msg)
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            answer = (msg.get("content") or "").strip()
+            break
+        for c in calls:
+            fn = c.get("function") or {}
+            result = run_tool(fn.get("name"), fn.get("arguments") or "{}")
+            messages.append({"role": "tool", "tool_call_id": c.get("id"),
+                             "content": str(result)[:800]})
+    if not answer:
+        answer = stats_text_nl()
+    hist.append({"role": "assistant", "content": answer})
+    del hist[:-40]
+    return answer
+
+def run_tool(name, args_json):
+    try:
+        a = json.loads(args_json) if isinstance(args_json, str) else (args_json or {})
+    except Exception:  # noqa: BLE001
+        a = {}
+    try:
+        if name == "add_income":
+            with _ledlock:
+                d = ledger_load()
+                d.setdefault("entries", []).append({
+                    "ts": _now(), "type": "income", "amount_eur": float(a.get("amount_eur") or 0),
+                    "method": a.get("method") or "cash", "customer": a.get("customer"),
+                    "note": a.get("note") or "telegram", "source": "telegram"})
+                ledger_save(d)
+                s = compute_stats(d)
+                hf_sync_up()
+            return (f"inkomsten €{a.get('amount_eur')} ({a.get('method')}) geboekt. "
+                    f"Stand: cash {s['cash_pct']}% | marge {s['margin_pct']}%")
+        if name == "add_cost":
+            with _ledlock:
+                d = ledger_load()
+                d.setdefault("entries", []).append({
+                    "ts": _now(), "type": "cost", "amount_eur": float(a.get("amount_eur") or 0),
+                    "method": "basetao", "note": a.get("note") or "telegram",
+                    "source": "telegram"})
+                ledger_save(d)
+                s = compute_stats(d)
+                hf_sync_up()
+            return f"kosten €{a.get('amount_eur')} geboekt, marge nu {s['margin_pct']}%"
+        if name == "create_order":
+            with _ledlock:
+                d = ledger_load()
+                o = order_add(d, a.get("customer"), a.get("items"), a.get("price_eur") or 0,
+                              note="telegram")
+                ledger_save(d)
+                hf_sync_up()
+            return (f"order #{o['num']} aangemaakt: {o['customer']} — {o['items'] or '?'} "
+                    f"€{o['price_eur']:g} (te bestellen, nog niet betaald)")
+        if name == "update_order":
+            with _ledlock:
+                d = ledger_load()
+                o = order_update(d, int(a.get("num")), order_status=a.get("order_status"),
+                                 payment_status=a.get("payment_status"),
+                                 payment_method=a.get("payment_method"),
+                                 customer=a.get("customer"), items=a.get("items"),
+                                 price_eur=a.get("price_eur"))
+                ledger_save(d)
+                hf_sync_up()
+            if not o:
+                return "order niet gevonden"
+            return (f"order #{o['num']} bijgewerkt: 📦{o['order_status']} 💶{o['payment_status']}"
+                    + (f" ({o['payment_method']})" if o.get("payment_method") not in (None, "onbekend") else ""))
+        if name == "delete_order":
+            with _ledlock:
+                d = ledger_load()
+                before = len(d.get("orders", []))
+                d["orders"] = [o for o in d.get("orders", []) if o.get("num") != int(a.get("num"))]
+                gone = len(d["orders"]) < before
+                ledger_save(d)
+                hf_sync_up()
+            return "order verwijderd" if gone else "order niet gevonden"
+        if name == "list_orders":
+            with _ledlock:
+                d = ledger_load()
+            orders = d.get("orders", [])[-10:]
+            if not orders:
+                return "geen orders"
+            return "\n".join(f"#{o['num']} {o['customer']} — {o['items'] or '?'} €{o['price_eur']:g} — "
+                             f"📦{o['order_status']} 💶{o['payment_status']}" for o in orders)
+        if name == "get_stats":
+            with _ledlock:
+                d = ledger_load()
+            s = compute_stats(d)
+            return (f"cash €{s['inc_cash']} ({s['cash_pct']}%) | basetao €{s['inc_wallet']} "
+                    f"({s['wallet_pct']}%) | inkomsten €{s['income']} | kosten €{s['cost']} | "
+                    f"winst €{s['profit']} (marge {s['margin_pct']}%) | open orders {s['open_orders']} "
+                    f"(te innen €{s['te_innen']})")
+        if name == "basetao_status":
+            w = basetao_wallet(max_age=60) or {}
+            c = w.get("counters") or {}
+            if not w.get("logged_in"):
+                return "basetao niet bereikbaar of cookie verlopen"
+            return (f"saldo ¥{w.get('balance_cny') or '?'} | ordered {c.get('Pending', '?')} | "
+                    f"arrived {c.get('Arrived', '?')} | shipped {c.get('Shipped', '?')} | "
+                    f"searching {c.get('Searching', '?')} | pakketten ontvangen {c.get('Received', '?')}")
+        return f"onbekende tool {name}"
+    except Exception as e:  # noqa: BLE001
+        print("tool error:", name, e)
+        return f"tool-fout: {e}"
 
 def llm_parse(text):
     if not LLM_API_KEY:
@@ -306,8 +498,9 @@ EXTRACT_PROMPT = """Haal uit deze Basetao-orderlijst alle producten. Antwoord ON
 Sla dubbelloopse kopregels/paginering over. Geen producten? antwoord []"""
 
 def llm_extract_products(text):
-    content = llm_chat([{"role": "system", "content": EXTRACT_PROMPT},
-                        {"role": "user", "content": text[:14000]}], timeout=180)
+    msg = llm_chat([{"role": "system", "content": EXTRACT_PROMPT},
+                    {"role": "user", "content": text[:14000]}], timeout=180)
+    content = msg.get("content") or ""
     m = re.search(r"\[.*\]", content, re.S)
     return json.loads(m.group(0) if m else "[]")
 
@@ -397,13 +590,14 @@ def handle_update(msg):
     if low.startswith("/basetao") or low.startswith("/orders") or low.startswith("/order ") \
             or low.startswith("/status ") or low.startswith("/betaald") or low.startswith("/klant "):
         return handle_command(chat_id, text)
+    tg("sendChatAction", chat_id=chat_id, action="typing")
     try:
-        action = llm_parse(text)
+        answer = agent_reply(chat_id, text)
     except Exception as e:  # noqa: BLE001
-        print("llm error:", e)
-        tg("sendMessage", chat_id=chat_id, text="❌ Kon de opdracht niet verwerken.")
+        print("agent error:", e)
+        tg("sendMessage", chat_id=chat_id, text="❌ Dat ging mis, probeer het nog eens.")
         return
-    tg("sendMessage", chat_id=chat_id, text=apply_action(action, text))
+    tg("sendMessage", chat_id=chat_id, text=answer)
 
 def handle_command(chat_id, text):
     low = text.lower().strip()
@@ -751,13 +945,12 @@ async def api_process_audio(req: Request):
     if not text:
         return JSONResponse({"ok": False, "error": "geen spraak herkend"})
     try:
-        action = await asyncio.to_thread(llm_parse, text)
+        reply = await asyncio.to_thread(agent_reply, "audio", text)
     except Exception as e:  # noqa: BLE001
-        print("llm error:", e)
+        print("agent error:", e)
         return JSONResponse({"ok": False, "transcript": text, "error": "verwerking mislukt"},
                             status_code=502)
-    reply = apply_action(action, text)
-    return JSONResponse({"ok": True, "transcript": text, "actie": action, "resultaat": reply})
+    return JSONResponse({"ok": True, "transcript": text, "resultaat": reply})
 
 @app.get("/basetao")
 def basetao_route():
@@ -790,6 +983,19 @@ def basetao_rows():
         out[name] = {"len": len(t), "has_login": "Login" in t[:3000],
                      "n_order_img": t.count("order_img"), "regions": regions}
     return JSONResponse(out)
+
+@app.post("/api/agent")
+async def api_agent(req: Request):
+    """Zelfde agent- brein als Telegram, maar via HTTP (voor tests en de website)."""
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "ongeldige json"}, status_code=400)
+    text = (b.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"ok": False, "error": "geen tekst"}, status_code=400)
+    answer = await asyncio.to_thread(agent_reply, "web", text)
+    return JSONResponse({"ok": True, "resultaat": answer})
 
 @app.post("/api/basetao")
 async def api_basetao(req: Request):
