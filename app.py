@@ -17,6 +17,7 @@ Env vars (set as Space secrets):
   HF_TOKEN         optional  - HF write token, needed only for HF_DATASET sync
 """
 import asyncio
+import base64
 import json
 import os
 import re
@@ -43,6 +44,7 @@ BASETAO_COOKIE = os.environ.get("BASETAO_COOKIE", "").strip()  # DevTools cookie
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()  # gratis ASR: whisper-large-v3
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "").strip()  # Voxtral ASR (beste quadrant)
 MISTRAL_ASR_MODEL = os.environ.get("MISTRAL_ASR_MODEL", "voxtral-small-latest")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()  # gratis ASR via AI Studio
 
 ORDER_STATUSES = ["interesse", "info_gevraagd", "prijs_gegeven", "wacht_op_antwoord",
                   "te_bestellen", "besteld", "onderweg", "binnen", "verpakken", "klaar",
@@ -232,6 +234,22 @@ def transcribe(path):
                 timeout=120)
         r.raise_for_status()
         return (r.json().get("text") or "").strip()
+    if GEMINI_API_KEY:
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        model = os.environ.get("GEMINI_ASR_MODEL", "gemini-2.5-flash")
+        r = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            headers={"x-goog-api-key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [
+                {"text": "Transcribe this audio exactly, in the original language (Dutch). "
+                         "Output only the transcription text."},
+                {"inline_data": {"mime_type": "audio/ogg", "data": b64}}]}]},
+            timeout=120)
+        r.raise_for_status()
+        d = r.json()
+        return ((d.get("candidates") or [{}])[0].get("content", {}).get("parts", [{}])[0]
+                .get("text") or "").strip()
     global _whisper
     if _whisper is None:
         from faster_whisper import WhisperModel
