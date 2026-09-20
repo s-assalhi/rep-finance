@@ -38,6 +38,43 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip()  # dashboard-gate op publieke Space
 BASETAO_COOKIE = os.environ.get("BASETAO_COOKIE", "").strip()  # DevTools cookie voor /basetao sync
 
+ORDER_STATUSES = ["interesse", "info_gevraagd", "prijs_gegeven", "wacht_op_antwoord",
+                  "te_bestellen", "besteld", "onderweg", "binnen", "verpakken", "klaar",
+                  "geen_interesse"]
+PAYMENT_STATUSES = ["nog_niet_betaald", "deels_betaald", "betaald", "geen_interesse"]
+
+def _now():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+def order_add(d, customer, items, price_eur, payment_method="onbekend", basetao_ids=None, note=""):
+    orders = d.setdefault("orders", [])
+    nxt = 1 + max([o.get("num", 0) for o in orders] or [0])
+    o = {"num": nxt, "customer": customer or "?", "items": items or "",
+         "price_eur": float(price_eur or 0), "order_status": "te_bestellen",
+         "payment_status": "nog_niet_betaald", "payment_method": payment_method,
+         "basetao_ids": basetao_ids or [], "created": _now(), "updated": _now(),
+         "history": [{"ts": _now(), "event": "order aangemaakt"}]}
+    if note:
+        o["note"] = note
+    orders.append(o)
+    return o
+
+def order_update(d, num, **fields):
+    for o in d.get("orders", []):
+        if o.get("num") == num:
+            for k, v in fields.items():
+                if v in (None, ""):
+                    continue
+                if k in ("order_status", "payment_status") and v not in (ORDER_STATUSES + PAYMENT_STATUSES):
+                    continue
+                if o.get(k) != v:
+                    o.setdefault("history", []).append(
+                        {"ts": _now(), "field": k, "from": o.get(k), "to": v})
+                    o[k] = v
+            o["updated"] = _now()
+            return o
+    return None
+
 API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 _ledlock = threading.Lock()
 
@@ -96,12 +133,15 @@ def compute_stats(d):
     profit = income - cost
     margin = (profit / income * 100.0) if income else 0.0
     cash_pct = (inc_cash / income * 100.0) if income else 0.0
+    open_orders = [o for o in d.get("orders", []) if o.get("payment_status") != "betaald"]
+    te_innen = sum(float(o.get("price_eur") or 0) for o in open_orders)
     return dict(
         inc_cash=round(inc_cash, 2), inc_wallet=round(inc_wallet, 2),
         income=round(income, 2), cost=round(cost, 2), profit=round(profit, 2),
         margin_pct=round(margin, 1), cash_pct=round(cash_pct, 1),
         wallet_pct=round(100 - cash_pct, 1),
-        gap_pct=round(cash_pct - margin, 1))
+        gap_pct=round(cash_pct - margin, 1),
+        open_orders=len(open_orders), te_innen=round(te_innen, 2))
 
 def stats_text_nl():
     s = compute_stats(ledger_load())
@@ -116,6 +156,16 @@ def apply_action(a, raw):
     t = a.get("type", "note")
     if t == "query":
         return stats_text_nl()
+    if t == "order":
+        with _ledlock:
+            d = ledger_load()
+            o = order_add(d, a.get("customer"), a.get("items"), a.get("amount_eur") or 0,
+                          note=raw)
+            ledger_save(d)
+            hf_sync_up()
+        return (f"📝 Order #{o['num']} aangemaakt: {o['customer']} — {o['items'] or '?'} "
+                f"€{o['price_eur']:g}\n📦 status: te bestellen | 💶 nog niet betaald\n"
+                f"Wijzig met: /status #{o['num']} besteld  of  /betaald #{o['num']} cash")
     amt = a.get("amount_eur")
     with _ledlock:
         d = ledger_load()
@@ -160,12 +210,13 @@ def transcribe(path):
 
 # ---------------- LLM (OpenAI-compatible) ----------------
 SCHEMA_PROMPT = """Je zet Nederlandse berichten om naar bookhoud-acties. Antwoord ONLY met JSON, geen andere tekst:
-{"type":"income|cost|query|note","amount_eur":number|null,"method":"cash|basetao"|null,"customer":string|null,"items":string|null,"note":string|null}
+{"type":"income|cost|order|query|note","amount_eur":number|null,"method":"cash|basetao"|null,"customer":string|null,"items":string|null,"note":string|null}
 Regels:
 - "cash" = contant geld (physical euro cash). "basetao" = directe betaling in de basetao-portemonnee.
 - amount_eur altijd in euro's (converteer "lek"/"bale"/"lak" naar eur getal).
-- type=query als er om totalen/overzicht gevraagd wordt; type=note als het geen inkomsten/kosten/vraag is.
-- customer = wie betaalt/gaf opdracht; items = wat is er gekocht."""
+- type=order als iemand iets bestelt of besteld heeft (klant + items + bedrag) maar er nog geen geld ontvangen is.
+- type=query als er om totalen/overzicht gevraagd wordt; type=note als het geen inkomsten/kosten/bestelling/vraag is.
+- customer = wie betaalt/gaf opdracht; items = wat is er gekocht/besteld."""
 
 def llm_parse(text):
     if not LLM_API_KEY:
@@ -248,7 +299,21 @@ def handle_update(msg):
         text = msg["text"].strip()
     else:
         return
-    if text.lower().startswith("/basetao"):
+    low = text.lower()
+    if low.startswith("/basetao") or low.startswith("/orders") or low.startswith("/order ") \
+            or low.startswith("/status ") or low.startswith("/betaald"):
+        return handle_command(chat_id, text)
+    try:
+        action = llm_parse(text)
+    except Exception as e:  # noqa: BLE001
+        print("llm error:", e)
+        tg("sendMessage", chat_id=chat_id, text="❌ Kon de opdracht niet verwerken.")
+        return
+    tg("sendMessage", chat_id=chat_id, text=apply_action(action, text))
+
+def handle_command(chat_id, text):
+    low = text.lower().strip()
+    if low.startswith("/basetao"):
         if not BASETAO_COOKIE:
             tg("sendMessage", chat_id=chat_id,
                text="❌ BASETAO_COOKIE is niet ingesteld (Render secret).")
@@ -265,13 +330,60 @@ def handle_update(msg):
                  f"Ordered {c.get('Ordered', '?')} | Arrived {c.get('Arrived', '?')} | "
                  f"Shipped {c.get('Shipped', '?')} | Searching {c.get('Searching', '?')}\n"
                  f"Pakketten ontvangen: {c.get('Received', '?')}"))
-    try:
-        action = llm_parse(text)
-    except Exception as e:  # noqa: BLE001
-        print("llm error:", e)
-        tg("sendMessage", chat_id=chat_id, text="❌ Kon de opdracht niet verwerken.")
         return
-    tg("sendMessage", chat_id=chat_id, text=apply_action(action, text))
+    with _ledlock:
+        d = ledger_load()
+        orders = d.get("orders", [])
+        if low.startswith("/order "):
+            parts = [p.strip() for p in text[6:].split("|")]
+            customer = parts[0] if parts else "?"
+            items = parts[1] if len(parts) > 1 else ""
+            price = parts[2] if len(parts) > 2 else "0"
+            o = order_add(d, customer, items, price)
+            ledger_save(d)
+            hf_sync_up()
+            tg("sendMessage", chat_id=chat_id,
+               text=(f"📝 Order #{o['num']}: {o['customer']} — {o['items'] or '?'} €{o['price_eur']:g}\n"
+                     f"📦 te bestellen | 💶 nog niet betaald"))
+            return
+        if low.startswith("/orders"):
+            if not orders:
+                tg("sendMessage", chat_id=chat_id, text="📭 Nog geen orders.")
+                return
+            lines = []
+            for o in orders[-15:]:
+                lines.append(f"#{o['num']} {o['customer']} — {o['items'] or '?'} €{o['price_eur']:g} — "
+                             f"📦{o['order_status']} 💶{o['payment_status']}")
+            tg("sendMessage", chat_id=chat_id, text="📋 Orders:\n" + "\n".join(lines))
+            return
+        m = re.match(r"/status\s+#?(\d+)\s+(\S+)", low)
+        if m:
+            num, st = int(m.group(1)), m.group(2)
+            if st not in ORDER_STATUSES:
+                tg("sendMessage", chat_id=chat_id,
+                   text="⚠️ Onbekende status. Kies uit: " + ", ".join(ORDER_STATUSES))
+                return
+            o = order_update(d, num, order_status=st)
+            ledger_save(d)
+            hf_sync_up()
+            tg("sendMessage", chat_id=chat_id,
+               text=(f"📦 Order #{num}: status → {st}" if o else f"❌ Order #{num} niet gevonden."))
+            return
+        m = re.match(r"/betaald\s+#?(\d+)(?:\s+(cash|basetao))?", low)
+        if m:
+            num, meth = int(m.group(1)), m.group(2)
+            fields = {"payment_status": "betaald"}
+            if meth:
+                fields["payment_method"] = meth
+            o = order_update(d, num, **fields)
+            ledger_save(d)
+            hf_sync_up()
+            tg("sendMessage", chat_id=chat_id,
+               text=(f"💶 Order #{num}: betaald" + (f" via {meth}" if meth else "") + " ✅"
+                     if o else f"❌ Order #{num} niet gevonden."))
+            return
+        tg("sendMessage", chat_id=chat_id,
+           text="ℹ️ Gebruik: /order klant | items | bedrag · /orders · /status #1 besteld · /betaald #1 cash")
 
 def poll_loop():
     offset = 0
@@ -331,7 +443,23 @@ button{background:#4caf7d;border:0;border-radius:8px;padding:10px;font-weight:70
 <div class="k" style="margin-top:6px">€__PROFIT__ winst op €__INCOME__</div></div>
 <div class="card"><div class="k">Cash% vs marge%</div><div class="v __GAPCLS__">__GAP__ pp</div>
 <div class="k" style="margin-top:6px">doel: ~0 (cash aandeel volgt winst)</div></div>
+<div class="card"><div class="k">Open orders</div><div class="v">__OPENORDERS__</div>
+<div class="k" style="margin-top:6px">te innen: €__TEINNEN__</div></div>
 </div>
+<h1 style="font-size:17px;margin-top:30px">📋 Order- &amp; betaalstatus per order</h1>
+<table><tr><th>#</th><th>Klant</th><th>Items</th><th>€</th><th>Orderstatus</th><th>Betaalstatus</th><th>Basetao</th><th>Laatst</th></tr>
+__OROWS__
+</table>
+<form onsubmit="addOrder(event)">
+<input id="o_customer" placeholder="klant">
+<input id="o_items" placeholder="items (bv. Ajax setje M)">
+<input id="o_price" type="number" step="0.01" placeholder="prijs €">
+<button>Nieuwe order</button></form>
+<form onsubmit="updOrder(event)">
+<input id="u_num" type="number" placeholder="order #">
+<select id="u_os"><option value="">— orderstatus —</option>__OSOPT__</select>
+<select id="u_ps"><option value="">— betaalstatus —</option>__PSOPT__</select>
+<button>Status bijwerken</button></form>
 <table><tr><th>Datum</th><th>Type</th><th>€</th><th>Methode</th><th>Klant</th><th>Notitie</th></tr>
 __ROWS__
 </table>
@@ -348,7 +476,16 @@ async function add(e){e.preventDefault();const g=i=>document.getElementById(i).v
 const r=await fetch('/api/entry',{method:'POST',headers:{'Content-Type':'application/json','X-Access-Code':K},
 body:JSON.stringify({type:g('f_type'),amount_eur:parseFloat(g('f_amount')),
 method:g('f_method'),customer:g('f_customer')||null,note:g('f_note')||null})});
-r.ok?location.reload():alert('mislukt');}</script>
+r.ok?location.reload():alert('mislukt');}
+async function postOrder(b){const r=await fetch('/api/order',{method:'POST',
+headers:{'Content-Type':'application/json','X-Access-Code':K},body:JSON.stringify(b)});
+r.ok?location.reload():alert('mislukt');}
+async function addOrder(e){e.preventDefault();const g=i=>document.getElementById(i).value;
+postOrder({customer:g('o_customer'),items:g('o_items'),price_eur:parseFloat(g('o_price')||'0')});}
+async function updOrder(e){e.preventDefault();const g=i=>document.getElementById(i).value;
+const b={num:parseInt(g('u_num'))};if(g('u_os'))b.order_status=g('u_os');if(g('u_ps'))b.payment_status=g('u_ps');
+if(!g('u_num')||(!g('u_os')&&!g('u_ps'))){alert('vul order # en minstens één status in');return;}
+postOrder(b);}</script>
 <div class="note">Kosten tot nu toe: €__COST__ · seed-data uit Rep_Database.xlsx (Codex-historie).</div>
 </body></html>"""
 
@@ -364,6 +501,21 @@ def render_dashboard():
                     ("€%g" % e["amount_eur"]) if e.get("amount_eur") else "—",
                     e.get("method") or "—", e.get("customer") or "—",
                     (e.get("note") or "")[:80]))
+        orows = []
+        for o in reversed(d.get("orders", [])):
+            bt = " ".join('<a href="https://www.basetao.com/best-taobao-agent-service/'
+                          'purchase/order_img/{0}.html" target="_blank" rel="noopener">{0}</a>'
+                          .format(i) for i in o.get("basetao_ids", [])) or "—"
+            orows.append(
+                "<tr><td>#{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}{}</td><td>{}</td><td>{}</td></tr>".format(
+                    o.get("num", ""), o.get("customer", ""), o.get("items", ""),
+                    ("€%g" % o["price_eur"]) if o.get("price_eur") else "—",
+                    o.get("order_status", ""),
+                    o.get("payment_status", ""),
+                    (" (" + o["payment_method"] + ")") if o.get("payment_method") not in (None, "onbekend") else "",
+                    bt, o.get("updated", "")))
+    os_opts = "".join(f'<option value="{s}">{s}</option>' for s in ORDER_STATUSES)
+    ps_opts = "".join(f'<option value="{s}">{s}</option>' for s in PAYMENT_STATUSES)
     gap_cls = "gap-ok" if abs(s["gap_pct"]) < 5 else "gap-bad"
     return (DASH
             .replace("__CASH__", f"{s['inc_cash']:g}")
@@ -376,6 +528,11 @@ def render_dashboard():
             .replace("__COST__", f"{s['cost']:g}")
             .replace("__GAP__", str(s["gap_pct"]))
             .replace("__GAPCLS__", gap_cls)
+            .replace("__OPENORDERS__", str(s["open_orders"]))
+            .replace("__TEINNEN__", f"{s['te_innen']:g}")
+            .replace("__OROWS__", "\n".join(orows) or '<tr><td colspan="8">— nog geen orders —</td></tr>')
+            .replace("__OSOPT__", os_opts)
+            .replace("__PSOPT__", ps_opts)
             .replace("__ROWS__", "\n".join(rows) or "<tr><td colspan=6>—</td></tr>"))
 
 app = FastAPI()
@@ -429,3 +586,31 @@ async def api_entry(req: Request):
         s = compute_stats(d)
         hf_sync_up()
     return JSONResponse({"ok": True, "stats": s})
+
+@app.get("/orders")
+def orders():
+    with _ledlock:
+        d = ledger_load()
+    return JSONResponse({"orders": d.get("orders", [])})
+
+@app.post("/api/order")
+async def api_order(req: Request):
+    b = await req.json()
+    with _ledlock:
+        d = ledger_load()
+        if b.get("num"):
+            o = order_update(d, int(b["num"]), order_status=b.get("order_status"),
+                             payment_status=b.get("payment_status"),
+                             payment_method=b.get("payment_method"))
+            if not o:
+                return JSONResponse({"ok": False, "error": "order niet gevonden"}, status_code=404)
+        else:
+            if not b.get("customer"):
+                return JSONResponse({"ok": False, "error": "klant ontbreekt"}, status_code=400)
+            o = order_add(d, b.get("customer"), b.get("items"), b.get("price_eur") or 0,
+                          payment_method=b.get("payment_method") or "onbekend",
+                          basetao_ids=b.get("basetao_ids") or [], note="website")
+        ledger_save(d)
+        hf_sync_up()
+    return JSONResponse({"ok": True, "order": {k: o.get(k) for k in
+                        ("num", "customer", "items", "price_eur", "order_status", "payment_status")}})
