@@ -232,7 +232,8 @@ def transcribe(path):
                 data={"model": "whisper-large-v3", "language": "nl",
                       "response_format": "json"},
                 timeout=120)
-        r.raise_for_status()
+        if r.status_code != 200:
+            raise RuntimeError(f"groq {r.status_code}: {r.text[:140]}")
         return (r.json().get("text") or "").strip()
     if GEMINI_API_KEY:
         with open(path, "rb") as f:
@@ -571,7 +572,9 @@ def handle_update(msg):
             text = transcribe(path)
         except Exception as e:  # noqa: BLE001
             print("asr error:", e)
-            tg("sendMessage", chat_id=chat_id, text="❌ Spraakherkenning mislukt.")
+            detail = str(e)[:180] or "onbekend"
+            tg("sendMessage", chat_id=chat_id,
+               text=f"❌ Spraakherkenning mislukt.\n🔧 {detail}\nProbeer opnieuw of typ het.")
             return
         finally:
             try:
