@@ -36,6 +36,7 @@ LEDGER_PATH = os.environ.get("LEDGER_PATH", "data/ledger.json")
 HF_DATASET = os.environ.get("HF_DATASET", "").strip()
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip()  # dashboard-gate op publieke Space
+BASETAO_COOKIE = os.environ.get("BASETAO_COOKIE", "").strip()  # DevTools cookie voor /basetao sync
 
 API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 _ledlock = threading.Lock()
@@ -200,6 +201,25 @@ def tg_download(file_id):
         print("download error:", e)
         return None
 
+def basetao_snapshot():
+    """Account-tellers + saldo van basetao (server-rendered HTML, sessiecookie nodig)."""
+    headers = {
+        "Cookie": BASETAO_COOKIE,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.basetao.com/",
+    }
+    r = requests.get(
+        "https://www.basetao.com/best-taobao-agent-service/my_account/welcome.html",
+        headers=headers, timeout=30)
+    t = r.text
+    if "Welcome back" not in t:
+        return None
+    m = re.search(r'bi-currency-yen[\s\S]{0,150}?>\s*([\d.,]+)\s*<', t)
+    counters = dict(re.findall(
+        r'id="(Ordered|Arrived|Cancelled|Shipped|Searching|Received|Pending)"'
+        r'[\s\S]{0,300}?badge[^>]*>\s*(\d+)\s*</span>', t))
+    return {"balance_cny": m.group(1) if m else "?", "counters": counters}
+
 def handle_update(msg):
     chat_id = msg["chat"]["id"]
     media = msg.get("voice") or msg.get("audio") or msg.get("document")
@@ -228,6 +248,23 @@ def handle_update(msg):
         text = msg["text"].strip()
     else:
         return
+    if text.lower().startswith("/basetao"):
+        if not BASETAO_COOKIE:
+            tg("sendMessage", chat_id=chat_id,
+               text="❌ BASETAO_COOKIE is niet ingesteld (Render secret).")
+            return
+        tg("sendChatAction", chat_id=chat_id, action="typing")
+        snap = basetao_snapshot()
+        if not snap:
+            tg("sendMessage", chat_id=chat_id,
+               text="⚠️ Basetao-cookie verlopen — ververs hem en update het secret.")
+            return
+        c = snap["counters"]
+        tg("sendMessage", chat_id=chat_id,
+           text=(f"📦 Basetao — saldo ¥{snap['balance_cny']}\n"
+                 f"Ordered {c.get('Ordered', '?')} | Arrived {c.get('Arrived', '?')} | "
+                 f"Shipped {c.get('Shipped', '?')} | Searching {c.get('Searching', '?')}\n"
+                 f"Pakketten ontvangen: {c.get('Received', '?')}"))
     try:
         action = llm_parse(text)
     except Exception as e:  # noqa: BLE001
