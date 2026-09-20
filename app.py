@@ -103,8 +103,8 @@ def hf_sync_up():
         print("hf sync up failed:", e)
 
 def hf_sync_down():
-    """On cold boot, restore the ledger from the HF Dataset if local is gone."""
-    if not (HF_DATASET and HF_TOKEN) or os.path.exists(LEDGER_PATH):
+    """Bij start: de HF-backup is leidend als die bestaat (repo-seed is alleen fallback)."""
+    if not (HF_DATASET and HF_TOKEN):
         return
     try:
         import shutil
@@ -113,7 +113,7 @@ def hf_sync_down():
                             filename="ledger.json", token=HF_TOKEN)
         os.makedirs(os.path.dirname(LEDGER_PATH) or ".", exist_ok=True)
         shutil.copy(p, LEDGER_PATH)
-        print("ledger restored from HF dataset")
+        print("ledger hersteld uit HF dataset")
     except Exception as e:  # noqa: BLE001
         print("hf sync down failed:", e)
 
