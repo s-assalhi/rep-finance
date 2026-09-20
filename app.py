@@ -287,7 +287,8 @@ def tg_download(file_id):
         return None
 
 def basetao_snapshot():
-    """Basetao-sessie testen + wat er server-side leesbaar is (raw HTML)."""
+    """Basetao-sessie testen + saldo/tellers uit de server-HTML.
+    CF-prerendering levert de data willekeurig mee -> tot 4x proberen."""
     headers = {
         "Cookie": BASETAO_COOKIE,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -295,20 +296,30 @@ def basetao_snapshot():
         "Referer": "https://www.basetao.com/",
         "Accept": "text/html",
     }
-    r = requests.get(
-        "https://www.basetao.com/best-taobao-agent-service/my_account/welcome.html",
-        headers=headers, timeout=30)
-    t = r.text
-    logged_in = "Welcome back" in t and "Login" not in t[:3000]
-    m = re.search(r'bi-currency-yen[\s\S]{0,150}?>\s*([\d.,]+)\s*<', t)
-    counters = dict(re.findall(
-        r'id="(Ordered|Arrived|Cancelled|Shipped|Searching|Received|Pending)"'
-        r'[\s\S]{0,300}?badge[^>]*>\s*(\d+)\s*</span>', t))
-    return {"logged_in": logged_in, "http": r.status_code,
-            "balance_cny": m.group(1) if m else None,
-            "counters": counters,
-            "note": "tellers/saldo worden door basetao via JS geladen; "
-                    "gebruik de browser-bridge voor volledige data"}
+    logged_in, balance, counters, http_code = False, None, {}, 0
+    for attempt in range(4):
+        try:
+            r = requests.get(
+                "https://www.basetao.com/best-taobao-agent-service/my_account/welcome.html",
+                headers=headers, timeout=30,
+                params={"r": str(int(time.time() * 1000)) + str(attempt)})
+        except Exception as e:  # noqa: BLE001
+            print("basetao fetch error:", e)
+            break
+        http_code = r.status_code
+        t = r.text
+        logged_in = "Welcome back" in t
+        m = re.search(r'bi-currency-yen[\s\S]{0,150}?>\s*([\d.,]+)\s*<', t)
+        balance = m.group(1) if m else None
+        counters = dict(re.findall(
+            r'id="(Ordered|Arrived|Cancelled|Shipped|Searching|Received|Pending)"'
+            r'[\s\S]{0,300}?badge[^>]*>\s*(\d+)\s*</span>', t))
+        if logged_in and (balance or counters):
+            break
+        time.sleep(1.2)
+    return {"logged_in": logged_in, "http": http_code,
+            "balance_cny": balance, "counters": counters,
+            "note": "saldo/tellers komen mee wanneer basetao ze in de HTML serveert"}
 
 def handle_update(msg):
     chat_id = msg["chat"]["id"]
