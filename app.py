@@ -33,6 +33,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "").strip()
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.z.ai/api/coding/paas/v4").rstrip("/")
 LLM_MODEL = os.environ.get("LLM_MODEL", "glm-4.6")
+LLM_THINKING = os.environ.get("LLM_THINKING", "disabled").strip().lower()
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")
 LEDGER_PATH = os.environ.get("LEDGER_PATH", "data/ledger.json")
 HF_DATASET = os.environ.get("HF_DATASET", "").strip()
@@ -40,6 +41,8 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip()  # dashboard-gate op publieke Space
 BASETAO_COOKIE = os.environ.get("BASETAO_COOKIE", "").strip()  # DevTools cookie voor /basetao sync
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()  # gratis ASR: whisper-large-v3
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "").strip()  # Voxtral ASR (beste quadrant)
+MISTRAL_ASR_MODEL = os.environ.get("MISTRAL_ASR_MODEL", "voxtral-small-latest")
 
 ORDER_STATUSES = ["interesse", "info_gevraagd", "prijs_gegeven", "wacht_op_antwoord",
                   "te_bestellen", "besteld", "onderweg", "binnen", "verpakken", "klaar",
@@ -203,6 +206,21 @@ def apply_action(a, raw):
 _whisper = None
 
 def transcribe(path):
+    if MISTRAL_API_KEY:
+        for lang in ("nl", None):
+            with open(path, "rb") as f:
+                data = {"model": MISTRAL_ASR_MODEL}
+                if lang:
+                    data["language"] = lang
+                r = requests.post(
+                    "https://api.mistral.ai/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {MISTRAL_API_KEY}"},
+                    files={"file": ("audio.ogg", f, "audio/ogg")},
+                    data=data, timeout=120)
+            if r.status_code == 400 and lang:
+                continue  # taalparameter niet ondersteund -> opnieuw zonder
+            r.raise_for_status()
+            return (r.json().get("text") or "").strip()
     if GROQ_API_KEY:
         with open(path, "rb") as f:
             r = requests.post(
@@ -232,18 +250,33 @@ Regels:
 - type=query als er om totalen/overzicht gevraagd wordt; type=note als het geen inkomsten/kosten/bestelling/vraag is.
 - customer = wie betaalt/gaf opdracht; items = wat is er gekocht/besteld."""
 
+def llm_chat(messages, timeout=150):
+    """Chat-completions met fallback: eerst met thinking-param, dan minimaal."""
+    if not LLM_API_KEY:
+        raise RuntimeError("LLM_API_KEY ontbreekt")
+    headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
+    attempts = [{"model": LLM_MODEL, "temperature": 0, "messages": messages}]
+    if LLM_THINKING in ("enabled", "disabled"):
+        attempts[0]["thinking"] = {"type": LLM_THINKING}
+    attempts.append({"model": LLM_MODEL, "messages": messages})
+    last_err = None
+    for payload in attempts:
+        try:
+            r = requests.post(f"{LLM_BASE_URL}/chat/completions",
+                              headers=headers, json=payload, timeout=timeout)
+        except Exception as e:  # noqa: BLE001
+            last_err = str(e)
+            continue
+        if r.status_code == 200:
+            return r.json()["choices"][0]["message"]["content"]
+        last_err = f"HTTP {r.status_code}: {r.text[:200]}"
+    raise RuntimeError(last_err)
+
 def llm_parse(text):
     if not LLM_API_KEY:
         return {"type": "note", "note": text}
-    r = requests.post(
-        f"{LLM_BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
-        json={"model": LLM_MODEL, "temperature": 0,
-              "messages": [{"role": "system", "content": SCHEMA_PROMPT},
-                           {"role": "user", "content": text}]},
-        timeout=60)
-    r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"]
+    content = llm_chat([{"role": "system", "content": SCHEMA_PROMPT},
+                        {"role": "user", "content": text}])
     m = re.search(r"\{.*\}", content, re.S)
     return json.loads(m.group(0) if m else content)
 
@@ -255,15 +288,8 @@ EXTRACT_PROMPT = """Haal uit deze Basetao-orderlijst alle producten. Antwoord ON
 Sla dubbelloopse kopregels/paginering over. Geen producten? antwoord []"""
 
 def llm_extract_products(text):
-    r = requests.post(
-        f"{LLM_BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
-        json={"model": LLM_MODEL, "temperature": 0,
-              "messages": [{"role": "system", "content": EXTRACT_PROMPT},
-                           {"role": "user", "content": text[:14000]}]},
-        timeout=150)
-    r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"]
+    content = llm_chat([{"role": "system", "content": EXTRACT_PROMPT},
+                        {"role": "user", "content": text[:14000]}], timeout=180)
     m = re.search(r"\[.*\]", content, re.S)
     return json.loads(m.group(0) if m else "[]")
 
