@@ -481,6 +481,8 @@ button{background:#4caf7d;border:0;border-radius:8px;padding:10px;font-weight:70
 <div class="k" style="margin-top:6px">doel: ~0 (cash aandeel volgt winst)</div></div>
 <div class="card"><div class="k">Open orders</div><div class="v">__OPENORDERS__</div>
 <div class="k" style="margin-top:6px">te innen: €__TEINNEN__</div></div>
+<div class="card"><div class="k">Basetao portemonnee</div><div class="v">¥__BTBAL__</div>
+<div class="k" style="margin-top:6px">__BTCNT__</div></div>
 </div>
 <h1 style="font-size:17px;margin-top:30px">📋 Order- &amp; betaalstatus per order</h1>
 <table><tr><th>#</th><th>Klant</th><th>Items</th><th>€</th><th>Orderstatus</th><th>Betaalstatus</th><th>Basetao</th><th>Laatst</th><th></th></tr>
@@ -531,6 +533,12 @@ r.ok?location.reload():alert('mislukt');}</script>
 </body></html>"""
 
 def render_dashboard():
+    w = basetao_wallet() or {}
+    btbal = w.get("balance_cny") or "—"
+    c = w.get("counters") or {}
+    btc = ("ordered {0} · arrived {1} · shipped {2} · searching {3}".format(
+        c.get("Pending", "?"), c.get("Arrived", "?"), c.get("Shipped", "?"),
+        c.get("Searching", "?"))) if c else "live via basetao-API (cache 5 min)"
     with _ledlock:
         d = ledger_load()
         s = compute_stats(d)
@@ -573,6 +581,8 @@ def render_dashboard():
             .replace("__GAPCLS__", gap_cls)
             .replace("__OPENORDERS__", str(s["open_orders"]))
             .replace("__TEINNEN__", f"{s['te_innen']:g}")
+            .replace("__BTBAL__", str(btbal))
+            .replace("__BTCNT__", btc)
             .replace("__OROWS__", "\n".join(orows) or '<tr><td colspan="9">— nog geen orders —</td></tr>')
             .replace("__OSOPT__", os_opts)
             .replace("__PSOPT__", ps_opts)
@@ -637,6 +647,50 @@ def orders():
     with _ledlock:
         d = ledger_load()
     return JSONResponse({"orders": d.get("orders", [])})
+
+_wallet_cache = {"ts": 0.0, "data": None}
+
+def basetao_wallet(max_age=300):
+    """Live basetao-saldo + tellers, max 1x per 5 min daadwerkelijk opgehaald."""
+    if _wallet_cache["data"] and time.time() - _wallet_cache["ts"] < max_age:
+        return _wallet_cache["data"]
+    if BASETAO_COOKIE:
+        try:
+            _wallet_cache["data"] = basetao_snapshot()
+            _wallet_cache["ts"] = time.time()
+        except Exception as e:  # noqa: BLE001
+            print("basetao wallet error:", e)
+    return _wallet_cache["data"]
+
+@app.post("/api/process-audio")
+async def api_process_audio(req: Request):
+    """Audio uploaden (ogg/mp3/wav) -> whisper -> GLM -> kasboek/orders."""
+    body = await req.body()
+    if len(body) < 500:
+        return JSONResponse({"ok": False, "error": "geen audio ontvangen"}, status_code=400)
+    path = os.path.join("/tmp", f"up_{int(time.time() * 1000)}.ogg")
+    with open(path, "wb") as f:
+        f.write(body)
+    try:
+        text = await asyncio.to_thread(transcribe, path)
+    except Exception as e:  # noqa: BLE001
+        print("asr error:", e)
+        return JSONResponse({"ok": False, "error": "spraakherkenning mislukt"}, status_code=500)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    if not text:
+        return JSONResponse({"ok": False, "error": "geen spraak herkend"})
+    try:
+        action = await asyncio.to_thread(llm_parse, text)
+    except Exception as e:  # noqa: BLE001
+        print("llm error:", e)
+        return JSONResponse({"ok": False, "transcript": text, "error": "verwerking mislukt"},
+                            status_code=502)
+    reply = apply_action(action, text)
+    return JSONResponse({"ok": True, "transcript": text, "actie": action, "resultaat": reply})
 
 @app.get("/basetao")
 def basetao_route():
