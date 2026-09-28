@@ -28,6 +28,7 @@ import requests
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 # ---------------- config ----------------
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
@@ -858,8 +859,13 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
-    public = ("/healthz", "/shop")
-    if ACCESS_CODE and request.url.path not in public:
+    """Site is openbaar; alleen beheer-routes vereisen de toegangscode."""
+    path = request.url.path
+    gated = (path.startswith("/admin") or path.startswith("/api")
+             or path.startswith("/stats") or path.startswith("/orders")
+             or path.startswith("/basetao") or path.startswith("/docs")
+             or path.startswith("/openapi"))
+    if ACCESS_CODE and gated:
         code = (request.query_params.get("key")
                 or request.headers.get("x-access-code")
                 or request.cookies.get("key"))
@@ -941,12 +947,11 @@ def render_shop():
     return (SHOP.replace("__CARDS__", "\n".join(cards))
                 .replace("__YEAR__", time.strftime("%Y")))
 
-@app.get("/shop", response_class=HTMLResponse)
-def shop():
-    return render_shop()
+SITE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "static", "index.html")
 
-@app.get("/", response_class=HTMLResponse)
-def index():
+@app.get("/admin", response_class=HTMLResponse)
+def admin():
     return render_dashboard()
 
 @app.get("/healthz")
@@ -1170,3 +1175,6 @@ async def api_order_delete(num: int):
         ledger_save(d)
         hf_sync_up()
     return JSONResponse({"ok": True})
+
+app.mount('/', StaticFiles(directory='static', html=True), name='site')
+
