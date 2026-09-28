@@ -712,7 +712,7 @@ def poll_loop():
 DASH = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="60">
-<title>Rep Finance</title><style>
+<title>YZ Shop — Admin</title><style>
 body{font-family:system-ui,Segoe UI,sans-serif;background:#0f1716;color:#e8efec;margin:0;padding:24px}
 h1{font-size:20px;margin:0 0 4px}.sub{color:#8aa39c;font-size:13px;margin-bottom:20px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;max-width:980px}
@@ -731,7 +731,7 @@ input,select{background:#0c1210;border:1px solid #2b463c;color:#e8efec;border-ra
 button{background:#4caf7d;border:0;border-radius:8px;padding:10px;font-weight:700;cursor:pointer}
 .note{color:#8aa39c;font-size:12px;margin-top:18px;max-width:980px}
 </style></head><body>
-<h1>💶 Rep Finance — cash vs basetao</h1>
+<h1>YZ SHOP — admin · cash vs basetao</h1>
 <div class="sub">live · verversen elke 60s · stuur stemberichten naar je Telegram bot</div>
 <div class="grid">
 <div class="card"><div class="k">Cash</div><div class="v">€__CASH__</div>
@@ -858,7 +858,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
-    if ACCESS_CODE and request.url.path != "/healthz":
+    public = ("/healthz", "/shop")
+    if ACCESS_CODE and request.url.path not in public:
         code = (request.query_params.get("key")
                 or request.headers.get("x-access-code")
                 or request.cookies.get("key"))
@@ -871,6 +872,78 @@ async def access_gate(request: Request, call_next):
 def _start():
     hf_sync_down()
     threading.Thread(target=poll_loop, daemon=True).start()
+
+SHOP = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YZ Shop — premium reps</title><style>
+body{font-family:system-ui,Segoe UI,sans-serif;background:#0b0f0e;color:#eef2f0;margin:0;padding:0 0 60px}
+header{padding:34px 24px 10px;max-width:1080px;margin:0 auto}
+.brand{font-size:30px;font-weight:800;letter-spacing:.02em}
+.brand span{color:#f7941d}
+.sub{color:#8fa39b;margin-top:6px;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px;
+max-width:1080px;margin:26px auto 0;padding:0 24px}
+.pcard{background:#141c1a;border:1px solid #22332c;border-radius:14px;padding:18px;
+display:flex;flex-direction:column;gap:10px}
+.ptag{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#f7941d}
+.pcard h3{margin:0;font-size:16px;line-height:1.35;font-weight:650}
+.pprice{font-size:20px;font-weight:800}
+.pnote{color:#8fa39b;font-size:12px;margin-top:-4px}
+.pbtn{margin-top:auto;background:#f7941d;color:#10130f;text-align:center;font-weight:800;
+text-decoration:none;border-radius:10px;padding:11px;font-size:14px}
+.pbtn:hover{filter:brightness(1.08)}
+.empty{grid-column:1/-1;color:#8fa39b;background:#141c1a;border:1px dashed #22332c;
+border-radius:14px;padding:30px;text-align:center}
+footer{max-width:1080px;margin:44px auto 0;padding:0 24px;color:#5f7268;font-size:12px;
+border-top:1px solid #1a2620;padding-top:18px}
+footer a{color:#f7941d}
+.tg{position:fixed;right:20px;bottom:20px;background:#2aabee;color:#fff;font-weight:800;
+border-radius:999px;padding:13px 20px;text-decoration:none;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+</style></head><body>
+<header>
+<div class="brand">YZ<span> SHOP</span></div>
+<div class="sub">premium reps · handgepickte drops · levering 2–3 weken · betaling bij ontvangst</div>
+</header>
+<div class="grid">
+__CARDS__
+</div>
+<footer>YZ Shop · bestellen en betalen regelen we persoonlijk via
+<a href="https://t.me/younesrepbot">Telegram</a> · leverage levering NL · geen voorraad = op aanvraag</footer>
+<a class="tg" href="https://t.me/younesrepbot">Bestel via Telegram</a>
+</body></html>"""
+
+_STATUS_NL = {"besteld": "in bestelling", "onderweg": "onderweg naar NL",
+              "binnen": "op voorraad", "verpakken": "klaar gemaakt",
+              "klaar": "direct leverbaar", "te_bestellen": "bestel ik zo",
+              "interesse": "op aanvraag", "prijs_gegeven": "op aanvraag"}
+
+def render_shop():
+    with _ledlock:
+        d = ledger_load()
+    items = [o for o in d.get("orders", [])
+             if (o.get("customer") or "").strip().lower() in ("onbekend", "", "?")]
+    cards = []
+    for o in reversed(items[-24:]):
+        price = ("€%g" % o["price_eur"]) if o.get("price_eur") else "Prijs in DM"
+        st = _STATUS_NL.get(o.get("order_status", ""), o.get("order_status", ""))
+        bt = ""
+        if o.get("basetao_ids"):
+            bt = ('<div class="pnote">QC: <a style="color:#f7941d" target="_blank" rel="noopener" '
+                  'href="https://www.basetao.com/best-taobao-agent-service/purchase/order_img/%s.html">'
+                  "foto's</a></div>" % o["basetao_ids"][0])
+        cards.append(
+            '<div class="pcard"><div class="ptag">%s</div><h3>%s</h3>'
+            '<div class="pprice">%s</div>%s%s'
+            '<a class="pbtn" href="https://t.me/younesrepbot">Bestel via Telegram</a></div>'
+            % (st, o.get("items") or "Custom item", price, "", bt))
+    if not cards:
+        cards.append('<div class="empty">Nieuwe drop onderweg — DM voor de huidige voorraad 📦</div>')
+    return (SHOP.replace("__CARDS__", "\n".join(cards))
+                .replace("__YEAR__", time.strftime("%Y")))
+
+@app.get("/shop", response_class=HTMLResponse)
+def shop():
+    return render_shop()
 
 @app.get("/", response_class=HTMLResponse)
 def index():
