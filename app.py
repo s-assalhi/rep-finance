@@ -19,6 +19,7 @@ Env vars (set as Space secrets):
 import asyncio
 import base64
 import json
+import mimetypes
 import os
 import re
 import threading
@@ -27,7 +28,7 @@ import time
 import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 # ---------------- config ----------------
@@ -1178,14 +1179,23 @@ async def api_order_delete(num: int):
 
 @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
 def page_fallback(full_path: str):
-    """Extensieloze paden (/product/x, /aanvragen) -> .html in static/."""
-    if ".." in full_path or full_path == "":
+    """Volledige statische handler voor de gespiegelde site (incl. .html-mapping)."""
+    if ".." in full_path:
         raise HTTPException(status_code=404)
-    cand = os.path.join("static", full_path.replace("/", os.sep) + ".html")
-    if os.path.isfile(cand):
-        with open(cand, "r", encoding="utf-8") as f:
-            return f.read()
-    raise HTTPException(status_code=404)
+    base = os.path.join("static", full_path.replace("/", os.sep))
+    if full_path == "" or os.path.isdir(base):
+        cand = os.path.join(base if os.path.isdir(base) else "static", "index.html")
+    elif os.path.isfile(base):
+        cand = base
+    elif os.path.isfile(base + ".html"):
+        cand = base + ".html"
+    else:
+        raise HTTPException(status_code=404)
+    mime, _ = mimetypes.guess_type(cand)
+    if mime is None and cand.endswith(".webp"):
+        mime = "image/webp"
+    with open(cand, "rb") as f:
+        return Response(content=f.read(), media_type=mime or "text/html")
 
 app.mount('/', StaticFiles(directory='static', html=True), name='site')
 
