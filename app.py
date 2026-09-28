@@ -25,7 +25,7 @@ import threading
 import time
 
 import requests
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1175,6 +1175,17 @@ async def api_order_delete(num: int):
         ledger_save(d)
         hf_sync_up()
     return JSONResponse({"ok": True})
+
+@app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
+def page_fallback(full_path: str):
+    """Extensieloze paden (/product/x, /aanvragen) -> .html in static/."""
+    if ".." in full_path or full_path == "":
+        raise HTTPException(status_code=404)
+    cand = os.path.join("static", full_path.replace("/", os.sep) + ".html")
+    if os.path.isfile(cand):
+        with open(cand, "r", encoding="utf-8") as f:
+            return f.read()
+    raise HTTPException(status_code=404)
 
 app.mount('/', StaticFiles(directory='static', html=True), name='site')
 
