@@ -688,8 +688,13 @@ def handle_command(chat_id, text):
            text="ℹ️ Gebruik: /order klant | items | bedrag · /orders · /status #1 besteld · /betaald #1 cash · /klant #1 Koppig")
 
 def poll_loop():
-    offset = 0
-    print("telegram polling started, token set:", bool(TELEGRAM_TOKEN))
+    # startpositie herstellen uit het kasboek zodat herstarts geen herhaling geven
+    try:
+        with _ledlock:
+            offset = int(ledger_load().get("tg_offset") or 0)
+    except Exception:  # noqa: BLE001
+        offset = 0
+    print("telegram polling started, token set:", bool(TELEGRAM_TOKEN), "| offset:", offset)
     while True:
         if not TELEGRAM_TOKEN:
             time.sleep(30)
@@ -703,6 +708,10 @@ def poll_loop():
             for u in r.json().get("result", []):
                 offset = u["update_id"] + 1
                 try:
+                    with _ledlock:
+                        d = ledger_load()
+                        d["tg_offset"] = offset
+                        ledger_save(d)
                     handle_update(u.get("message") or {})
                 except Exception as e:  # noqa: BLE001
                     print("handle error:", e)
