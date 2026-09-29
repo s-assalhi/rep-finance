@@ -1195,7 +1195,8 @@ def page_fallback(full_path: str):
     if mime is None and cand.endswith(".webp"):
         mime = "image/webp"
     with open(cand, "rb") as f:
-        return Response(content=f.read(), media_type=mime or "text/html")
+        return Response(content=f.read(), media_type=mime or "text/html",
+                        headers={"Cache-Control": "no-cache, max-age=0"})
 
 app.mount('/', StaticFiles(directory='static', html=True), name='site')
 
