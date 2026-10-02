@@ -206,6 +206,21 @@ async function start(backoffMs = 3000) {
   const mySends = new Set(); // bericht-id's die DEZE bridge zelf verstuurde (echo's negeren)
   let nextBackoff = backoffMs;
   let pairRequested = false;
+  let openedEver = false;
+
+  // hang-guard: als 'verbinden' te lang duurt zonder QR of open, socket opnieuw
+  const hangGuard = setTimeout(() => {
+    if (!openedEver) {
+      clearTimeout(hangGuard);
+      log('verbinden blijft hangen — socket opnieuw starten');
+      try { sock.end(new Error('hang-guard: connectie-timeout')); } catch (_) { }
+      setTimeout(() => start(nextBackoff), 5000);
+    }
+  }, 80000);
+  sock.ev.on('connection.update', (u2) => {
+    if (u2.connection === 'open') { openedEver = true; clearTimeout(hangGuard); }
+    if (u2.connection === 'close') clearTimeout(hangGuard);
+  });
 
   sock.ev.on('creds.update', saveCreds);
 
