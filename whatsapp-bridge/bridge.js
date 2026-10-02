@@ -20,6 +20,7 @@ const path = require('path');
 const fs = require('fs');
 
 const baileys = require('@whiskeysockets/baileys');
+const makeWASocket = baileys.default;
 const {
   useMultiFileAuthState,
   DisconnectReason,
