@@ -363,6 +363,17 @@ TOOLS = [
         "name": "basetao_status",
         "description": "Live basetao-portemonneesaldo en ordertellers.",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "zoek_qc",
+        "description": "Zoek producten met QC-foto's op doppel.fit (rep-sourcing). Geeft top-items "
+                       "met titel, prijs, verkoper en QC-fotolinks. Gebruik dit als een klant vraagt "
+                       "wat er leverbaar is of als Younes iets moet sourcen, bijv. 'groene dunks maat 42'. "
+                       "Vereist dat de doppel-bridge (userscript in Chrome van Younes) aan staat; "
+                       "anders krijg je een melding dat de bridge offline is.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "zoekterm, bijv. 'nike dunk low panda'"},
+            "count": {"type": "integer", "description": "aantal items (1-5), standaard 3"}},
+            "required": ["query"]}}},
 ]
 
 SYSTEM_AGENT = """Je bent Rep Agent, de boekhoudmaat van Younes: hij verkoopt reps (kleding, sneakers, sets) via Snapchat, WhatsApp en Telegram en inkoopt via basetao. Je praat in zijn taal: kort, casual, Nederlands, max ~4 regels, emoji's zijn oké.
@@ -372,6 +383,7 @@ Werkwijze:
 - Als een klant betaalt voor een bestaande order: markeer die order betaald (update_order met num als je hem weet) EN registreer het geld (add_income).
 - Als bedrag, methode (cash vs basetao) of product onduidelijk is: stel maximaal één korte doorvraag. Probeer verder zelf in te schatten.
 - Maten: vraag lengte/gewicht als iemand onduidelijk is over maat.
+- Bij sourcing-vragen ("heb je X", "wat kost Y", klant zoekt iets): gebruik zoek_qc en geef de beste matches kort met prijs en QC-link.
 - Bij "hoeveel/wat is mijn stand"-vragen: gebruik get_stats (en basetao_status) en vat samen.
 - Vermeld aan het eind kort wat je hebt gedaan of wat openstaat."""
 
@@ -392,7 +404,7 @@ def agent_reply(chat_id, text):
             break
         for c in calls:
             fn = c.get("function") or {}
-            result = run_tool(fn.get("name"), fn.get("arguments") or "{}")
+            result = run_tool(fn.get("name"), fn.get("arguments") or "{}", chat_key=chat_id)
             messages.append({"role": "tool", "tool_call_id": c.get("id"),
                              "content": str(result)[:800]})
     if not answer:
@@ -401,12 +413,14 @@ def agent_reply(chat_id, text):
     del hist[:-40]
     return answer
 
-def run_tool(name, args_json):
+def run_tool(name, args_json, chat_key=None):
     try:
         a = json.loads(args_json) if isinstance(args_json, str) else (args_json or {})
     except Exception:  # noqa: BLE001
         a = {}
     try:
+        if name == "zoek_qc":
+            return tool_zoek_qc(a.get("query"), a.get("count"), chat_key=chat_key)
         if name == "add_income":
             with _ledlock:
                 d = ledger_load()
@@ -1333,7 +1347,12 @@ async def wa_incoming(req: Request):
     except Exception as e:  # noqa: BLE001
         print("wa agent error:", e)
         return JSONResponse({"reply": None})  # stil falen; Younes ziet de chat in de app
-    return JSONResponse({"reply": answer})
+    resp = {"reply": answer}
+    with _srclock:
+        imgs = _wa_pending_images.pop("wa:" + key, None)
+    if imgs:
+        resp["images"] = [i.split(",", 1)[-1] for i in imgs]  # dataURL -> ruwe base64
+    return JSONResponse(resp)
 
 @app.post("/whatsapp/qr")
 async def wa_qr_post(req: Request):
@@ -1421,6 +1440,96 @@ setInterval(tick,5000);tick();</script></body></html>"""
 @app.get("/wa-qr", response_class=HTMLResponse, include_in_schema=False)
 def wa_qr_page():
     return HTMLResponse(WA_QR_PAGE.replace("__TAKEOVER__", f"{WA_TAKEOVER_HOURS:g}"))
+
+# ---------------- sourcing via doppel-bridge (userscript) ----------------
+# De Tampermonkey-userscript (doppel-bridge.user.js) draait in Younes' Chrome op
+# doppel.fit en voert zoekopdrachten uit: /s?query=... -> top items -> QC-foto's.
+# Resultaten (incl. eventueel ge-cropte foto's zonder bovenwatermerk) komen hier
+# terug en worden door de zoek_qc-tool als antwoord aan de klant gegeven.
+SOURCE_JOBS = {}
+SOURCE_RESULTS = {}
+_srclock = threading.Lock()
+_wa_pending_images = {}
+
+@app.get("/whatsapp/source/next")
+def source_next():
+    """Userscript pollt hier: oudste wachtende zoekopdracht ophalen."""
+    with _srclock:
+        for jid, job in SOURCE_JOBS.items():
+            if not job.get("dispatched"):
+                job["dispatched"] = True
+                return JSONResponse({"job": job})
+    return JSONResponse({"job": None})
+
+@app.post("/whatsapp/source/result")
+async def source_result(req: Request):
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False}, status_code=400)
+    jid = str(b.get("id") or "")
+    if not jid:
+        return JSONResponse({"ok": False, "error": "id ontbreekt"}, status_code=400)
+    with _srclock:
+        SOURCE_RESULTS[jid] = {"items": b.get("items") or [], "error": b.get("error"),
+                               "ts": time.time()}
+        # oude resultaten (1 uur) en jobs (10 min) opruimen
+        nu = time.time()
+        for k in [k for k, v in SOURCE_RESULTS.items() if nu - v.get("ts", nu) > 3600]:
+            SOURCE_RESULTS.pop(k, None)
+        for k in [k for k, v in SOURCE_JOBS.items() if nu - v.get("created_ts", nu) > 600]:
+            SOURCE_JOBS.pop(k, None)
+    return JSONResponse({"ok": True})
+
+def tool_zoek_qc(query, count=3, chat_key=None):
+    """Zoekopdracht naar de doppel-bridge sturen en op het resultaat wachten."""
+    q = (query or "").strip()
+    if not q:
+        return "geef een zoekopdracht op"
+    try:
+        count = max(1, min(int(count or 3), 5))
+    except (TypeError, ValueError):
+        count = 3
+    import urllib.parse
+    import uuid
+    jid = uuid.uuid4().hex[:12]
+    job = {"id": jid, "url": "https://doppel.fit/s?query=" + urllib.parse.quote(q),
+           "count": count, "created": _now(), "created_ts": time.time(), "dispatched": False}
+    with _srclock:
+        SOURCE_JOBS[jid] = job
+    deadline = time.time() + 75
+    res = None
+    while time.time() < deadline:
+        with _srclock:
+            res = SOURCE_RESULTS.pop(jid, None)
+        if res:
+            break
+        time.sleep(3)
+    if not res:
+        return ("doppel-bridge reageert niet — staat je Chrome open met doppel.fit "
+                "en de Rep Agent userscript aan?")
+    if res.get("error") or not res.get("items"):
+        return "doppel gaf geen resultaten" + (f" ({res.get('error')})" if res.get("error") else "")
+    items = [it for it in res["items"] if isinstance(it, dict)]
+    # foto's klaarzetten voor WhatsApp (gecropte b64 zonder bovenwatermerk)
+    if chat_key:
+        imgs = [it.get("foto_b64") for it in items if it.get("foto_b64")]
+        imgs = [i for i in imgs if isinstance(i, str) and i.startswith("data:image")]
+        if imgs and chat_key.startswith("wa:"):
+            _wa_pending_images[chat_key] = imgs[:2]
+    lines = []
+    for i, it in enumerate(items, 1):
+        regel = f"{i}. {(it.get('titel') or '?')[:70]}"
+        if it.get("prijs"):
+            regel += f" — {it['prijs']}"
+        if it.get("verkoper"):
+            regel += f" | {str(it['verkoper'])[:40]}"
+        lines.append(regel)
+        if it.get("url"):
+            lines.append(f"   {it['url']}")
+        for f in (it.get("fotos") or [])[:2]:
+            lines.append(f"   QC: {f}")
+    return f"Top {len(items)} op doppel.fit voor '{q}':\n" + "\n".join(lines)
 
 # ---------------- checkout via basetao wallet ----------------
 BASETAO_BASE = "https://www.basetao.com/best-taobao-agent-service"
