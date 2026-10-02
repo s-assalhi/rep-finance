@@ -28,7 +28,7 @@ import time
 import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 # ---------------- config ----------------
@@ -1185,6 +1185,62 @@ async def api_order_delete(num: int):
         ledger_save(d)
         hf_sync_up()
     return JSONResponse({"ok": True})
+
+# ---------------- checkout via basetao wallet ----------------
+BASETAO_BASE = "https://www.basetao.com/best-taobao-agent-service"
+BASETAO_PAY_METHOD = os.environ.get("BASETAO_PAY_METHOD", "ideal").strip()
+
+def _bt_session():
+    if not BASETAO_COOKIE:
+        raise RuntimeError("BASETAO_COOKIE niet ingesteld (Render secret)")
+    s = requests.Session()
+    s.headers.update({
+        "Cookie": BASETAO_COOKIE,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+        "Referer": BASETAO_BASE + "/my_account/account/recharge.html",
+        "X-Requested-With": "XMLHttpRequest",
+    })
+    return s
+
+def basetao_create_recharge(amount_eur: float):
+    """Maak een basetao top-up order voor exact dit bedrag en geef de gehoste
+    betaalpagina-URL terug: een normale iDEAL-checkout voor de klant, het
+    bedrag komt op onze eigen basetao-wallet."""
+    s = _bt_session()
+    r = s.get(BASETAO_BASE + "/my_account/account/recharge.html", timeout=30)
+    m = re.search(r'name="bt_sb_token"[^>]*value="([0-9a-f]+)"', r.text)
+    if not m:
+        raise RuntimeError("basetao-token niet gevonden (cookie verlopen?)")
+    r2 = s.post(BASETAO_BASE + "/account/recharge",
+                data={"bt_sb_token": m.group(1),
+                      "data": json.dumps({"option": BASETAO_PAY_METHOD,
+                                          "money": f"{amount_eur:.2f}"})},
+                timeout=30)
+    try:
+        out = r2.json()
+    except ValueError:
+        raise RuntimeError("basetao gaf geen JSON (Cloudflare?) http " + str(r2.status_code))
+    if str(out.get("value")) != "1":
+        raise RuntimeError("basetao weigerde: " + str(out.get("msg"))[:120])
+    return BASETAO_BASE + "/torecharge/index/" + str(out["msg"]) + ".html"
+
+@app.get("/checkout", include_in_schema=False)
+def checkout(amount: str = ""):
+    try:
+        amt = round(float(str(amount).replace(",", ".")), 2)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Ongeldig bedrag")
+    if amt < 10:
+        raise HTTPException(status_code=400, detail="Minimale betaling is €10")
+    if amt > 5000:
+        raise HTTPException(status_code=400, detail="Maximale betaling is €5000")
+    try:
+        pay_url = basetao_create_recharge(amt)
+    except Exception as e:  # noqa: BLE001
+        print("checkout error:", e)
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+    return RedirectResponse(pay_url, status_code=302)
 
 @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
 def page_fallback(full_path: str):
