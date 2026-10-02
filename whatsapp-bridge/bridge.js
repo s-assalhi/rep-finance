@@ -1,0 +1,229 @@
+/**
+ * Rep Agent — WhatsApp bridge (Baileys, gekoppeld apparaat).
+ *
+ * Koppelt je BESTAANDE WhatsApp-nummer aan de bot, net zoals WhatsApp Web:
+ * - je telefoon blijft gewoon werken, alle chats blijven zichtbaar;
+ * - typ jij zelf iets in een chat (vanaf je telefoon), dan pauzeert de bot
+ *   voor die chat ("human takeover", standaard 12u, instelbaar via WA_TAKEOVER_HOURS);
+ *   "/bot uit" = 7 dagen pauze, "/bot aan" = bot weer aan;
+ * - inkomende tekst/vocenotes/berichten-met-onderschrift gaan naar de Python-backend
+ *   (POST /whatsapp/incoming) en het antwoord gaat terug naar de chat.
+ *
+ * Env vars:
+ *   BACKEND_URL  default http://127.0.0.1:7860
+ *   BACKEND_KEY  X-Access-Code voor de backend (ACCESS_CODE), optioneel
+ *   WA_SESSION_DIR  default ../data/whatsapp-session (Baileys-sessie)
+ *   WA_ALLOW     kommalijst nummers die de bot WEL bedient (leeg = iedereen 1-op-1)
+ *   WA_BLOCK     kommalijst nummers die de bot NOOIT bedient
+ */
+const path = require('path');
+const fs = require('fs');
+
+const baileys = require('@whiskeysockets/baileys');
+const {
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  downloadMediaMessage,
+} = baileys;
+const pino = require('pino');
+const qrcodeLib = require('qrcode');
+const qrcodeTerminal = require('qrcode-terminal');
+
+const BACKEND_URL = (process.env.BACKEND_URL || 'http://127.0.0.1:7860').replace(/\/+$/, '');
+const BACKEND_KEY = process.env.BACKEND_KEY || '';
+const SESSION_DIR = process.env.WA_SESSION_DIR ||
+  path.join(__dirname, '..', 'data', 'whatsapp-session');
+const WA_ALLOW = (process.env.WA_ALLOW || '').split(',').map((s) => s.trim()).filter(Boolean);
+const WA_BLOCK = (process.env.WA_BLOCK || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+const logger = pino({ level: 'silent' });
+
+function log(...args) {
+  console.log(new Date().toISOString(), ...args);
+}
+
+async function post(pathName, body, timeoutMs = 15000) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await fetch(BACKEND_URL + pathName, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Access-Code': BACKEND_KEY },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (r.ok) return await r.json().catch(() => ({}));
+      log('backend', pathName, 'HTTP', r.status);
+    } catch (e) {
+      log('backend', pathName, 'fout:', e.message);
+    }
+    await new Promise((res) => setTimeout(res, 1500 * attempt));
+  }
+  return {};
+}
+
+function jidNumber(jid) {
+  return String(jid || '').split('@')[0].split(':')[0];
+}
+
+function messageText(m) {
+  let inner = m.message || {};
+  inner = inner.ephemeralMessage?.message || inner.viewOnceMessage?.message ||
+    inner.documentWithCaptionMessage?.message || inner;
+  if (inner.conversation) return { type: 'text', text: inner.conversation };
+  if (inner.extendedTextMessage?.text) return { type: 'text', text: inner.extendedTextMessage.text };
+  if (inner.imageMessage) return { type: 'image', text: inner.imageMessage.caption || '' };
+  if (inner.videoMessage) return { type: 'video', text: inner.videoMessage.caption || '' };
+  if (inner.audioMessage) return { type: 'audio', text: '' };
+  if (inner.documentMessage?.caption) return { type: 'text', text: inner.documentMessage.caption };
+  return null;
+}
+
+function chunks(text, max = 3500) {
+  const out = [];
+  let rest = String(text || '');
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf('\n', max);
+    if (cut < max * 0.5) cut = max;
+    out.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n+/, '');
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+async function handleMessage(sock, m, seen) {
+  if (!m.key || seen.has(m.key.id)) return;
+  seen.add(m.key.id);
+  if (seen.size > 800) seen.clear();
+
+  const jid = m.key.remoteJid || '';
+  if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@newsletter')) return;
+
+  const parsed = messageText(m);
+  if (!parsed) return; // stickers, locaties, contacten e.d. -> geen actie
+
+  const num = jidNumber(jid);
+  if (!m.key.fromMe) {
+    if (WA_BLOCK.some((b) => num.startsWith(b))) return;
+    if (WA_ALLOW.length && !WA_ALLOW.some((a) => num.startsWith(a))) return;
+  }
+
+  const fromMe = !!m.key.fromMe;
+  log(`${fromMe ? 'IK      ' : 'KLANT   '} +${num} (${m.pushName || 'onbekend'}):`,
+    (parsed.text || parsed.type).slice(0, 90).replace(/\n/g, ' '));
+
+  let audioB64 = null;
+  if (parsed.type === 'audio') {
+    try {
+      const buf = await downloadMediaMessage(m, 'buffer', {
+        reuploadRequest: sock.updateMediaMessage,
+      });
+      audioB64 = Buffer.from(buf).toString('base64');
+    } catch (e) {
+      log('audio downloaden mislukt:', e.message);
+      return;
+    }
+  }
+
+  try { await sock.readMessages([m.key]); } catch (_) { /* geen probleem */ }
+
+  const resp = await post('/whatsapp/incoming', {
+    chat: jid,
+    num,
+    name: m.pushName || '',
+    from_me: fromMe,
+    type: parsed.type,
+    text: (parsed.text || '').trim(),
+    audio_b64: audioB64,
+  }, 150000);
+
+  const reply = resp && resp.reply;
+  const toMe = resp && resp.to_me;
+  if (reply && (!fromMe || toMe)) {
+    try {
+      await sock.sendPresenceUpdate('composing', jid);
+      await new Promise((res) => setTimeout(res, 800 + Math.random() * 1400));
+      for (const part of chunks(reply)) {
+        await sock.sendMessage(jid, { text: part });
+        await new Promise((res) => setTimeout(res, 350));
+      }
+      await sock.sendPresenceUpdate('paused', jid);
+    } catch (e) {
+      log('versturen mislukt:', e.message);
+    }
+  }
+}
+
+async function start(backoffMs = 3000) {
+  fs.mkdirSync(SESSION_DIR, { recursive: true });
+  const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+  const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
+
+  const sock = makeWASocket({
+    version,
+    auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
+    logger,
+    printQRInTerminal: false,
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+  });
+
+  const seen = new Set();
+  let nextBackoff = backoffMs;
+
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', async (u) => {
+    const { connection, lastDisconnect, qr } = u;
+    if (qr) {
+      qrcodeTerminal.generate(qr, { small: true });
+      const dataUrl = await qrcodeLib.toDataURL(qr).catch(() => null);
+      await post('/whatsapp/qr', { qr: dataUrl || qr, qr_raw: qr });
+      log('nieuwe QR-code gepost naar backend — scan met je telefoon');
+    }
+    if (connection === 'open') {
+      log('WhatsApp VERBONDEN ✓ (telefoon blijft gewoon werken)');
+      nextBackoff = 3000;
+      await post('/whatsapp/status', { status: 'connected' });
+    }
+    if (connection === 'connecting') {
+      await post('/whatsapp/status', { status: 'verbinden' });
+    }
+    if (connection === 'close') {
+      const code = lastDisconnect?.error?.output?.statusCode;
+      const loggedOut = code === DisconnectReason.loggedOut;
+      log('verbinding gesloten, code:', code, '| loggedOut:', loggedOut);
+      await post('/whatsapp/status', {
+        status: loggedOut ? 'uitgelogd' : 'herverbinden',
+        error: String((lastDisconnect && lastDisconnect.error) || ''),
+      });
+      if (loggedOut) {
+        log('sessie ongeldig — sessie wissen, nieuwe QR nodig');
+        fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+      }
+      setTimeout(() => start(nextBackoff), nextBackoff);
+      nextBackoff = Math.min(nextBackoff * 2, 60000);
+    }
+  });
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const m of messages || []) {
+      try {
+        await handleMessage(sock, m, seen);
+      } catch (e) {
+        log('berichtverwerking fout:', e.message);
+      }
+    }
+  });
+}
+
+log('Rep Agent WhatsApp-bridge start | backend:', BACKEND_URL, '| sessie:', SESSION_DIR);
+if (!BACKEND_KEY) log('LET OP: BACKEND_KEY niet gezet (nodig als de backend ACCESS_CODE gebruikt)');
+start().catch((e) => {
+  log('start mislukt:', e.message, '- over 10s opnieuw');
+  setTimeout(() => start(), 10000);
+});
