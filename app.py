@@ -48,7 +48,7 @@ MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "").strip()  # Voxtral ASR (
 MISTRAL_ASR_MODEL = os.environ.get("MISTRAL_ASR_MODEL", "voxtral-small-latest")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()  # gratis ASR via AI Studio
 WHATSAPP_ENABLED = os.environ.get("WHATSAPP_ENABLED", "0") == "1"  # Baileys-bridge start via start.sh
-WA_TAKEOVER_HOURS = float(os.environ.get("WA_TAKEOVER_HOURS", "12"))  # pauze na handmatig antwoord
+WA_TAKEOVER_HOURS = float(os.environ.get("WA_TAKEOVER_HOURS", "0"))  # 0 = auto-pauze UIT: bot blijft actief als Younes zelf typt
 WA_IMG_REPLY = os.environ.get(
     "WA_IMG_REPLY",
     "Ontvangen 👍 Zet er even tekst bij (wat zoek je, kleur/maat)? Dan pak ik het direct op.").strip()
@@ -922,6 +922,18 @@ async def access_gate(request: Request, call_next):
 def _start():
     hf_sync_down()
     wa_backup_down()
+    if WA_TAKEOVER_HOURS <= 0:
+        # auto-pauze staat uit: ruim oude pauzes op zodat chats direct weer werken
+        try:
+            with _ledlock:
+                d = ledger_load()
+                paused = d.get("whatsapp", {}).get("paused", {})
+                if paused:
+                    paused.clear()
+                    ledger_save(d)
+                    print("oude whatsapp-pauzes gewist (takeover uit)")
+        except Exception as e:  # noqa: BLE001
+            print("pauzes wissen mislukt:", e)
     threading.Thread(target=poll_loop, daemon=True).start()
 
     def _wa_periodic_backup():
@@ -1339,8 +1351,10 @@ async def wa_incoming(req: Request):
             wa_pause(jid, hours=24 * 7)
             return JSONResponse({"reply": "🤖 Bot UIT in deze chat (7 dagen). "
                                           "Typ 'bot aan' om weer in te schakelen.", "to_me": True})
-        wa_pause(jid)  # human takeover: jij hebt zelf geantwoord
-        return JSONResponse({"reply": None, "note": f"pauze {WA_TAKEOVER_HOURS:g}u"})
+        if WA_TAKEOVER_HOURS > 0:
+            wa_pause(jid)  # human takeover: jij hebt zelf geantwoord
+            return JSONResponse({"reply": None, "note": f"pauze {WA_TAKEOVER_HOURS:g}u"})
+        return JSONResponse({"reply": None, "note": "takeover uit — bot blijft actief"})
 
     if wa_is_paused(jid):
         return JSONResponse({"reply": None, "note": "pauze"})
@@ -1462,7 +1476,7 @@ onderaan <b>'Koppelen met telefoonnummer in plaats daarvan'</b> → typ deze cod
 <ol style="margin-top:16px"><li>Open <b>WhatsApp</b> op je telefoon</li><li><b>Instellingen → Gekoppelde apparaten → Apparaat koppelen</b></li>
 <li>Scan de QR <i>vanaf een ander scherm</i>, of gebruik de code hierboven</li></ol>
 <div class="note">Na het koppelen blijft alles gewoon zichtbaar op je telefoon.<br>
-Reageer jij zelf in een chat? Dan stopt de bot daar voor __TAKEOVER__ uur.<br>
+__TAKEOVER_NOTE__
 Typ <b>bot uit</b> in een chat = bot 7 dagen uit · <b>bot aan</b> = weer aan.</div>
 </div>
 <script>let K=new URLSearchParams(location.search).get('key')||(document.cookie.split('; ').find(r=>r.startsWith('key='))||'').slice(4)||'';
@@ -1480,7 +1494,11 @@ setInterval(tick,5000);tick();</script></body></html>"""
 
 @app.get("/wa-qr", response_class=HTMLResponse, include_in_schema=False)
 def wa_qr_page():
-    return HTMLResponse(WA_QR_PAGE.replace("__TAKEOVER__", f"{WA_TAKEOVER_HOURS:g}"))
+    if WA_TAKEOVER_HOURS > 0:
+        note = f"Reageer jij zelf in een chat? Dan stopt de bot daar voor {WA_TAKEOVER_HOURS:g} uur.<br>"
+    else:
+        note = "Jij en de bot kunnen allebei in een chat reageren — de bot gaat niet uit als jij typt.<br>"
+    return HTMLResponse(WA_QR_PAGE.replace("__TAKEOVER_NOTE__", note))
 
 # ---------------- sourcing via doppel-bridge (userscript) ----------------
 # De Tampermonkey-userscript (doppel-bridge.user.js) draait in Younes' Chrome op
