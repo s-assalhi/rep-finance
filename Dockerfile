@@ -1,8 +1,8 @@
 FROM python:3.11-slim
 
-# Node 20 voor de WhatsApp-bridge (Baileys = Node-bibliotheek)
+# Node 20 voor de WhatsApp-bridge (Baileys = Node-bibliotheek, met git-dependencies)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates git \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
