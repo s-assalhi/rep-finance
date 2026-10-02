@@ -1,0 +1,13 @@
+{
+  "name": "whatsapp-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Rep Agent WhatsApp bridge: koppelt je bestaande WhatsApp-nummer als gekoppeld apparaat (zoals WhatsApp Web) aan de Rep Agent backend.",
+  "main": "bridge.js",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "pino": "^9.4.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
