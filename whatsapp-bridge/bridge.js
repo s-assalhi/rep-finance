@@ -183,7 +183,13 @@ async function handleMessage(sock, m, seen, mySends) {
 
 async function start(backoffMs = 3000) {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
+  let bestanden = [];
+  try { bestanden = fs.readdirSync(SESSION_DIR); } catch (_) { }
+  log('start met sessie-map', SESSION_DIR, '| bestanden:', bestanden.length,
+    bestanden.includes('creds.json') ? '(creds.json AANWEZIG)' : '(geen creds.json!)');
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+  log('authState: registered =', !!state.creds?.registered,
+    '| account =', (state.creds?.me?.id || state.creds?.account || 'onbekend').toString().slice(0, 20));
   const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
 
   const sock = makeWASocket({
@@ -221,10 +227,9 @@ async function start(backoffMs = 3000) {
       }
     }
     if (qr) {
-      qrcodeTerminal.generate(qr, { small: true });
       const dataUrl = await qrcodeLib.toDataURL(qr).catch(() => null);
       await post('/whatsapp/qr', { qr: dataUrl || qr, qr_raw: qr });
-      log('nieuwe QR-code gepost naar backend — scan met je telefoon');
+      log('nieuwe QR-code gepost naar backend — scan met je telefoon of gebruik de koppelcode');
     }
     if (connection === 'open') {
       log('WhatsApp VERBONDEN ✓ (telefoon blijft gewoon werken)');
