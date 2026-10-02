@@ -95,13 +95,17 @@ function chunks(text, max = 3500) {
   return out;
 }
 
-async function handleMessage(sock, m, seen) {
+async function handleMessage(sock, m, seen, mySends) {
   if (!m.key || seen.has(m.key.id)) return;
   seen.add(m.key.id);
   if (seen.size > 800) seen.clear();
 
   const jid = m.key.remoteJid || '';
   if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@newsletter')) return;
+
+  // Eigen echo's van berichten die de bridge zelf stuurde -> helemaal negeren
+  // (anders zou de bot zijn eigen antwoorden zien als "Younes reageerde zelf").
+  if (m.key.fromMe && mySends.has(m.key.id)) return;
 
   const parsed = messageText(m);
   if (!parsed) return; // stickers, locaties, contacten e.d. -> geen actie
@@ -153,19 +157,23 @@ async function handleMessage(sock, m, seen) {
         // eerste foto direct meesturen (al gecropt door de doppel-bridge), rest als tekst
         const caption = chunks(rest, 900)[0] || '';
         try {
-          await sock.sendMessage(jid, { image: Buffer.from(images[0], 'base64'), caption });
+          const s1 = await sock.sendMessage(jid, { image: Buffer.from(images[0], 'base64'), caption });
+          if (s1 && s1.key && s1.key.id) mySends.add(s1.key.id);
           rest = rest.slice(caption.length).replace(/^\s+/, '');
           for (const extra of images.slice(1, 3)) {
-            await sock.sendMessage(jid, { image: Buffer.from(extra, 'base64') });
+            const s2 = await sock.sendMessage(jid, { image: Buffer.from(extra, 'base64') });
+            if (s2 && s2.key && s2.key.id) mySends.add(s2.key.id);
           }
         } catch (e) {
           log('foto versturen mislukt:', e.message);
         }
       }
       for (const part of chunks(rest)) {
-        await sock.sendMessage(jid, { text: part });
+        const s3 = await sock.sendMessage(jid, { text: part });
+        if (s3 && s3.key && s3.key.id) mySends.add(s3.key.id);
         await new Promise((res) => setTimeout(res, 350));
       }
+      if (mySends.size > 600) mySends.clear();
       await sock.sendPresenceUpdate('paused', jid);
     } catch (e) {
       log('versturen mislukt:', e.message);
@@ -189,6 +197,7 @@ async function start(backoffMs = 3000) {
   });
 
   const seen = new Set();
+  const mySends = new Set(); // bericht-id's die DEZE bridge zelf verstuurde (echo's negeren)
   let nextBackoff = backoffMs;
   let pairRequested = false;
 
@@ -246,7 +255,7 @@ async function start(backoffMs = 3000) {
     if (type !== 'notify') return;
     for (const m of messages || []) {
       try {
-        await handleMessage(sock, m, seen);
+        await handleMessage(sock, m, seen, mySends);
       } catch (e) {
         log('berichtverwerking fout:', e.message);
       }
