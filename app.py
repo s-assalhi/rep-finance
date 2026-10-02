@@ -1461,22 +1461,47 @@ def basetao_create_recharge(amount_eur: float):
         raise RuntimeError("basetao weigerde: " + str(out.get("msg"))[:120])
     return BASETAO_BASE + "/torecharge/index/" + str(out["msg"]) + ".html"
 
+def _checkout_error(status: int, bericht: str):
+    """Vriendelijke HTML-foutpagina voor /checkout i.p.v. kale JSON."""
+    html = (
+        '<!doctype html><html lang="nl"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Betaling niet mogelijk — YZ Shop</title><style>'
+        'body{font-family:system-ui,Segoe UI,sans-serif;background:#0c0d10;color:#f2f3f5;'
+        'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}'
+        '.card{max-width:460px;text-align:center}'
+        'h1{font-size:22px;font-weight:700;margin:0 0 12px}'
+        'p{color:#9aa1ad;font-size:15px;line-height:1.6;margin:0 0 28px}'
+        'a{display:inline-block;color:#f7941d;font-weight:700;text-decoration:none;font-size:15px;'
+        'border:1px solid #2a2d33;border-radius:10px;padding:10px 18px}'
+        'a:hover{filter:brightness(1.15)}'
+        '</style></head><body><div class="card">'
+        '<h1>Betaling niet mogelijk</h1>'
+        '<p>' + bericht + '<br>Probeer het over een paar minuten opnieuw '
+        'of neem contact op via WhatsApp.</p>'
+        '<a href="/">&larr; Terug naar de shop</a>'
+        '</div></body></html>')
+    return HTMLResponse(html, status_code=status)
+
 @app.get("/checkout", include_in_schema=False)
 def checkout(amount: str = ""):
     try:
         amt = round(float(str(amount).replace(",", ".")), 2)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Ongeldig bedrag")
+        return _checkout_error(400, "Het opgegeven bedrag is ongeldig.")
     if amt < 10:
-        raise HTTPException(status_code=400, detail="Minimale betaling is €10")
+        return _checkout_error(400, "De minimale betaling is €10.")
     if amt > 5000:
-        raise HTTPException(status_code=400, detail="Maximale betaling is €5000")
+        return _checkout_error(400, "De maximale betaling is €5000.")
     try:
         pay_url = basetao_create_recharge(amt)
     except Exception as e:  # noqa: BLE001
         print("checkout error:", e)
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+        return _checkout_error(502, "De betaalpartner accepteert de betaling nu even niet.")
     return RedirectResponse(pay_url, status_code=302)
+
+_IMMUTABLE_EXTS = {".webp", ".png", ".jpg", ".jpeg", ".svg", ".ico",
+                   ".woff", ".woff2", ".css", ".js"}
 
 @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
 def page_fallback(full_path: str):
@@ -1492,12 +1517,23 @@ def page_fallback(full_path: str):
         cand = base + ".html"
     else:
         raise HTTPException(status_code=404)
+    if not os.path.isfile(cand):  # map zonder index.html -> 404 i.p.v. 500
+        raise HTTPException(status_code=404)
     mime, _ = mimetypes.guess_type(cand)
     if mime is None and cand.endswith(".webp"):
         mime = "image/webp"
-    with open(cand, "rb") as f:
-        return Response(content=f.read(), media_type=mime or "text/html",
-                        headers={"Cache-Control": "no-cache, max-age=0"})
+    ext = os.path.splitext(cand)[1].lower()
+    if ext in _IMMUTABLE_EXTS:
+        cache_hdr = "public, max-age=31536000, immutable"  # content-gehashde assets
+    else:
+        cache_hdr = "no-cache, max-age=0"  # .html en bestanden zonder extensie
+    try:
+        with open(cand, "rb") as f:
+            data = f.read()
+    except OSError:
+        raise HTTPException(status_code=404)
+    return Response(content=data, media_type=mime or "text/html",
+                    headers={"Cache-Control": cache_hdr})
 
 app.mount('/', StaticFiles(directory='static', html=True), name='site')
 
