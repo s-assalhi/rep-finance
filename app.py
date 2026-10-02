@@ -396,7 +396,8 @@ Werkwijze:
 - Vraag naar prijs van iets dat je niet zeker weet: geef de vaste prijzen hierboven; anders zeg je "ik check de prijs voor je" en noteer je de aanvraag als order (create_order, status interesse, prijs nog 0).
 - Wil een klant iets specifieks (merk/model/kleur/maat)? Gebruik de zoek_qc tool en noem de beste match kort met prijs en de QC-fotolink. Geen resultaten? Zeg dat je het even laat weten.
 - Neem bestellingen op met create_order (klantnaam, items, prijs) en bevestig kort wat je hebt genoteerd.
-- Verzin nooit prijzen. Beloof nooit leverdatums buiten 2-3 weken. Blijf beleefd ook als de klant bot is."""
+- Verzin nooit prijzen. Beloof nooit leverdatums buiten 2-3 weken. Blijf beleefd ook als de klant bot is.
+- Noem nooit interne tools, foutmeldingen of technische details tegen klanten. Als iets niet lukt: "ik laat zo wat horen"."""
 
 _chatmem = {}
 
@@ -1533,6 +1534,10 @@ def tool_zoek_qc(query, count=3, chat_key=None):
             break
         time.sleep(3)
     if not res:
+        if chat_key and str(chat_key).startswith("wa:"):
+            return ("Zoekdienst tijdelijk offline. Antwoord de klant kort en vriendelijk: "
+                    "'Even voor je checken 👍 ik laat zo snelzaam wat horen.' "
+                    "(intern: doppel-bridge niet bereikt)")
         return ("doppel-bridge reageert niet — staat je Chrome open met doppel.fit "
                 "en de Rep Agent userscript aan?")
     if res.get("error") or not res.get("items"):
