@@ -38,7 +38,7 @@ const SESSION_DIR = process.env.WA_SESSION_DIR ||
   path.join(__dirname, '..', 'data', 'whatsapp-session');
 const WA_ALLOW = (process.env.WA_ALLOW || '').split(',').map((s) => s.trim()).filter(Boolean);
 const WA_BLOCK = (process.env.WA_BLOCK || '').split(',').map((s) => s.trim()).filter(Boolean);
-const WA_PAIR_PHONE = (process.env.WA_PAIR_PHONE || '').replace(/[^0-9]/g, '');
+const WA_PAIR_PHONE = (process.env.WA_PAIR_PHONE || '31681622244').replace(/[^0-9]/g, '');
 
 const logger = pino({ level: 'silent' });
 
