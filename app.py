@@ -1409,7 +1409,7 @@ async def wa_status_post(req: Request):
             WA_STATE["backup_ts"] = time.time()
 
             def _bk():
-                time.sleep(20)  # laat Baileys eerst alles wegschrijven
+                time.sleep(130)  # pas backuppen als de verbinding stabiel is (geen halve sessie)
                 wa_backup_up()
             threading.Thread(target=_bk, daemon=True).start()
     return JSONResponse({"ok": True})
