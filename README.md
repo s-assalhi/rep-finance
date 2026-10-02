@@ -44,6 +44,22 @@ op een live website staat: **cash vs basetao-portemonnee vs winstmarge**.
 5. Herstart de Space. De website staat op `https://<gebruiker>-<space>.hf.space/`.
 6. Stuur een stembericht: *"Koppig heeft 40 euro cash gegeven voor het Ajax setje"*.
 
+## WhatsApp-koppeling (Baileys-bridge)
+
+De bot kan ook op je **bestaande WhatsApp-nummer** draaien (WhatsApp Business-app blijft gewoon
+werken — het is een "gekoppeld apparaat", net als WhatsApp Web):
+
+- **Koppelen**: zet `WHATSAPP_ENABLED=1` op de service en open `https://<service-url>/wa-qr`
+  (toegangscode invullen) → scan de QR met WhatsApp → *Gekoppelde apparaten*.
+- **Human takeover**: reageer je zelf in een chat, dan stopt de bot daar automatisch voor
+  `WA_TAKEOVER_HOURS` uur (standaard 12). Typ `bot uit` = 7 dagen uit, `bot aan` = weer aan.
+- **Vocenotes** worden getranscribeerd en verwerkt, net als op Telegram.
+- De bridge draait naast uvicorn in dezelfde container (`start.sh`, Node 20 in de Dockerfile,
+  Baileys in `whatsapp-bridge/`). De sessie wordt gebackupt naar je HF-dataset
+  (`wa-session.zip`) zodat een redeploy geen nieuwe QR-scan vraagt.
+- Let op: dit is een onofficiële koppeling (zelfde protocol als WhatsApp Web) — WhatsApp kan
+  dit niet toestaan. Houd het volume laag (antwoorden op klanten, geen bulkberichten).
+
 ## 24/7 houden
 
 Gratis Spaces slapen na **48 uur zonder verkeer**. Oplossingen (kies één):
