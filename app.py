@@ -387,13 +387,26 @@ Werkwijze:
 - Bij "hoeveel/wat is mijn stand"-vragen: gebruik get_stats (en basetao_status) en vat samen.
 - Vermeld aan het eind kort wat je hebt gedaan of wat openstaat."""
 
+SYSTEM_WA_KLANT = """Je bent de WhatsApp-assistent van YZ Shop van Younes: premium reps (kleding, sneakers, sets, tassen). Je praat met KLANTEN: kort en casual Nederlands (straattaal mag), max 3-4 regels, emoji's oké.
+
+Vaste feiten:
+- Voetbalshirt custom (naam + rugnummer): €30. Set (shirt + broekje): €40. ALO Runner: €155. Levertijd 2-3 weken.
+- Betalen: bij ontvangst (vaste klanten) of 50/50 vooraf (nieuw). Maten: bij twijfel vraag lengte + gewicht.
+Werkwijze:
+- Vraag naar prijs van iets dat je niet zeker weet: geef de vaste prijzen hierboven; anders zeg je "ik check de prijs voor je" en noteer je de aanvraag als order (create_order, status interesse, prijs nog 0).
+- Wil een klant iets specifieks (merk/model/kleur/maat)? Gebruik de zoek_qc tool en noem de beste match kort met prijs en de QC-fotolink. Geen resultaten? Zeg dat je het even laat weten.
+- Neem bestellingen op met create_order (klantnaam, items, prijs) en bevestig kort wat je hebt genoteerd.
+- Verzin nooit prijzen. Beloof nooit leverdatums buiten 2-3 weken. Blijf beleefd ook als de klant bot is."""
+
 _chatmem = {}
 
 def agent_reply(chat_id, text):
-    """Interactieve agent-loop met toolgebruik en gespreksgeheugen per chat."""
+    """Interactieve agent-loop met toolgebruik en gespreksgeheugen per chat.
+    WhatsApp-chats (wa:) praten met klanten -> ander brein dan boekhouding."""
     hist = _chatmem.setdefault(chat_id, [])
     hist.append({"role": "user", "content": text})
-    messages = [{"role": "system", "content": SYSTEM_AGENT}] + hist[-16:]
+    system = SYSTEM_WA_KLANT if str(chat_id).startswith("wa:") else SYSTEM_AGENT
+    messages = [{"role": "system", "content": system}] + hist[-16:]
     answer = None
     for _ in range(5):
         msg = llm_chat(messages, tools=TOOLS)
