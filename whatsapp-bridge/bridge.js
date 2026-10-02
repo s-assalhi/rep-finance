@@ -266,7 +266,7 @@ async function start(backoffMs = 3000) {
         log('sessie ongeldig — sessie wissen, nieuwe QR nodig');
         fs.rmSync(SESSION_DIR, { recursive: true, force: true });
       }
-      setTimeout(() => start(nextBackoff), nextBackoff);
+      setTimeout(() => start(nextBackoff).catch((e2) => log('herstart mislukt:', e2.message)), nextBackoff);
       nextBackoff = Math.min(nextBackoff * 2, 60000);
     }
   });
@@ -285,7 +285,12 @@ async function start(backoffMs = 3000) {
 
 log('Rep Agent WhatsApp-bridge start | backend:', BACKEND_URL, '| sessie:', SESSION_DIR);
 if (!BACKEND_KEY) log('LET OP: BACKEND_KEY niet gezet (nodig als de backend ACCESS_CODE gebruikt)');
+
+// never-die: crashes mogen het proces niet killen (supervisor in start.sh vangt de rest)
+process.on('uncaughtException', (e) => log('uncaughtException (blijf draaien):', e.message));
+process.on('unhandledRejection', (e) => log('unhandledRejection (blijf draaien):', String(e)));
+
 start().catch((e) => {
   log('start mislukt:', e.message, '- over 10s opnieuw');
-  setTimeout(() => start(), 10000);
+  setTimeout(() => start().catch((e2) => log('herstart mislukt:', e2.message)), 10000);
 });
