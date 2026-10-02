@@ -924,6 +924,19 @@ def _start():
     wa_backup_down()
     threading.Thread(target=poll_loop, daemon=True).start()
 
+    def _wa_periodic_backup():
+        # ververs de sessie-backup elke 30 min zolang we verbonden zijn,
+        # zodat een herstart nooit een verouderde (Bad MAC) sessie terugzet
+        while True:
+            time.sleep(1800)
+            try:
+                if WA_STATE.get("status") == "connected":
+                    wa_backup_up()
+            except Exception as e:  # noqa: BLE001
+                print("wa periodic backup failed:", e)
+
+    threading.Thread(target=_wa_periodic_backup, daemon=True).start()
+
 SHOP = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>YZ Shop — premium reps</title><style>
