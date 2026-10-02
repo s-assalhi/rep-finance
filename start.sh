@@ -22,7 +22,12 @@ if [ "${WHATSAPP_ENABLED:-0}" = "1" ]; then
     # dubbele verbinding met dezelfde sessie ziet (die logout de koppeling).
     sleep 15
     echo "[start] WhatsApp-bridge starten (sessie: $WA_SESSION_DIR)"
-    node /app/whatsapp-bridge/bridge.js &
+    # supervisor: start node altijd weer als hij zou stoppen/crashen
+    while true; do
+      node /app/whatsapp-bridge/bridge.js
+      echo "[start] bridge gestopt — herstart over 5s"
+      sleep 5
+    done &
   ) &
 fi
 
