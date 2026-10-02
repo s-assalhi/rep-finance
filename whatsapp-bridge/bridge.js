@@ -38,6 +38,7 @@ const SESSION_DIR = process.env.WA_SESSION_DIR ||
   path.join(__dirname, '..', 'data', 'whatsapp-session');
 const WA_ALLOW = (process.env.WA_ALLOW || '').split(',').map((s) => s.trim()).filter(Boolean);
 const WA_BLOCK = (process.env.WA_BLOCK || '').split(',').map((s) => s.trim()).filter(Boolean);
+const WA_PAIR_PHONE = (process.env.WA_PAIR_PHONE || '').replace(/[^0-9]/g, '');
 
 const logger = pino({ level: 'silent' });
 
@@ -189,11 +190,27 @@ async function start(backoffMs = 3000) {
 
   const seen = new Set();
   let nextBackoff = backoffMs;
+  let pairRequested = false;
 
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', async (u) => {
     const { connection, lastDisconnect, qr } = u;
+    if (qr && WA_PAIR_PHONE && !pairRequested && !sock.authState?.creds?.registered) {
+      // Koppelen MET CODE (handig als je alleen je telefoon hebt): geen QR nodig.
+      pairRequested = true;
+      try {
+        await new Promise((res) => setTimeout(res, 2500));
+        const raw = await sock.requestPairingCode(WA_PAIR_PHONE);
+        const code = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const pretty = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+        await post('/whatsapp/qr', { pair_code: pretty });
+        log('koppelcode gepost voor', WA_PAIR_PHONE.slice(0, 4), '***');
+      } catch (e) {
+        log('koppelcode opvragen mislukt:', e.message);
+        pairRequested = false;
+      }
+    }
     if (qr) {
       qrcodeTerminal.generate(qr, { small: true });
       const dataUrl = await qrcodeLib.toDataURL(qr).catch(() => null);
