@@ -1215,7 +1215,7 @@ async def api_order_delete(num: int):
 # die chat zodat hij het gesprek handmatig kan overnemen. "/bot uit" = 7 dagen,
 # "/bot aan" = weer inschakelen. Pauzes leven mee in ledger.json (overleeft restarts).
 WA_STATE = {"qr": None, "qr_ts": 0.0, "status": "startend" if WHATSAPP_ENABLED else "uit",
-            "error": "", "backup_ts": 0.0}
+            "error": "", "backup_ts": 0.0, "pair_code": None}
 
 def _wa_key(jid):
     return str(jid or "").split("@")[0].split(":")[0]
@@ -1356,20 +1356,26 @@ async def wa_incoming(req: Request):
 
 @app.post("/whatsapp/qr")
 async def wa_qr_post(req: Request):
-    """Bridge post hier elke nieuwe QR (data-URL)."""
+    """Bridge post hier elke nieuwe QR (data-URL) en/of de koppelcode."""
     try:
         b = await req.json()
     except Exception:  # noqa: BLE001
         return JSONResponse({"ok": False}, status_code=400)
-    WA_STATE["qr"] = b.get("qr") or None
-    WA_STATE["qr_ts"] = time.time()
-    WA_STATE["status"] = "wacht op scan"
+    if "qr" in b:
+        WA_STATE["qr"] = b.get("qr") or None
+        WA_STATE["qr_ts"] = time.time()
+        WA_STATE["status"] = "wacht op scan"
+    if b.get("pair_code"):
+        WA_STATE["pair_code"] = str(b["pair_code"])[:12]
+        if WA_STATE["status"] in ("startend", "verbinden"):
+            WA_STATE["status"] = "wacht op scan"
     return JSONResponse({"ok": True})
 
 @app.get("/whatsapp/qr")
 async def wa_qr_get():
     return JSONResponse({"status": WA_STATE["status"], "qr": WA_STATE["qr"],
                          "qr_age": int(time.time() - WA_STATE["qr_ts"]) if WA_STATE["qr"] else None,
+                         "pair_code": WA_STATE["pair_code"],
                          "error": WA_STATE["error"], "enabled": WHATSAPP_ENABLED})
 
 @app.post("/whatsapp/status")
@@ -1419,8 +1425,14 @@ ol{color:#c8d6d1;font-size:14px;line-height:1.6}
 <div class="sub">Koppel je bestaande nummer als apparaat — je telefoon blijft gewoon werken.</div>
 <div class="card"><input id="key" placeholder="toegangscode"><button onclick="save()">Opslaan</button>
 <div id="stat">laden…</div><img id="qr" style="display:none" alt="QR-code">
-<ol><li>Open <b>WhatsApp</b> op je telefoon</li><li><b>Instellingen → Gekoppelde apparaten → Apparaat koppelen</b></li>
-<li>Scan deze QR-code (ververst elke 20 seconden)</li></ol>
+<div id="pair" style="display:none">
+<div style="margin-top:16px;color:#8aa39c;font-size:13px">Geen tweede scherm? Koppel <b>met code</b>:</div>
+<div style="font-size:34px;font-weight:800;letter-spacing:.1em;margin:6px 0" id="paircode"></div>
+<div class="note">WhatsApp → <b>Instellingen → Gekoppelde apparaten → Apparaat koppelen</b> →
+onderaan <b>'Koppelen met telefoonnummer in plaats daarvan'</b> → typ deze code.<br>
+(De QR hierboven werkt alleen vanaf een ánder scherm, bijv. je laptop.)</div></div>
+<ol style="margin-top:16px"><li>Open <b>WhatsApp</b> op je telefoon</li><li><b>Instellingen → Gekoppelde apparaten → Apparaat koppelen</b></li>
+<li>Scan de QR <i>vanaf een ander scherm</i>, of gebruik de code hierboven</li></ol>
 <div class="note">Na het koppelen blijft alles gewoon zichtbaar op je telefoon.<br>
 Reageer jij zelf in een chat? Dan stopt de bot daar voor __TAKEOVER__ uur.<br>
 Typ <b>bot uit</b> in een chat = bot 7 dagen uit · <b>bot aan</b> = weer aan.</div>
@@ -1430,8 +1442,9 @@ if(K)document.getElementById('key').value=K;
 function save(){K=document.getElementById('key').value.trim();document.cookie='key='+K+';path=/;max-age=31536000';tick();}
 async function tick(){try{const r=await fetch('/whatsapp/qr',{headers:{'X-Access-Code':K}});
 if(r.status===401){document.getElementById('stat').textContent='Eerst je toegangscode invullen.';document.getElementById('qr').style.display='none';return;}
-const d=await r.json();const s=document.getElementById('stat');const q=document.getElementById('qr');
-if(d.status==='connected'){s.textContent='✅ WhatsApp is verbonden! Je kunt dit tabblad sluiten.';q.style.display='none';}
+const d=await r.json();const s=document.getElementById('stat');const q=document.getElementById('qr');const p=document.getElementById('pair');
+if(d.pair_code){p.style.display='block';document.getElementById('paircode').textContent=d.pair_code;}else{p.style.display='none';}
+if(d.status==='connected'){s.textContent='✅ WhatsApp is verbonden! Je kunt dit tabblad sluiten.';q.style.display='none';p.style.display='none';}
 else if(d.qr&&String(d.qr).startsWith('data:image')){s.textContent='⏳ Wachten op scan… (QR '+d.qr_age+'s oud)';q.src=d.qr;q.style.display='block';}
 else if(d.status==='uitgelogd'){s.textContent='Sessie verlopen — herstart de service en koppel opnieuw.';q.style.display='none';}
 else{s.textContent='⏳ Status: '+d.status+' — QR verschijnt vanzelf…';q.style.display='none';}}catch(e){document.getElementById('stat').textContent='geen verbinding met de bridge…';}}
