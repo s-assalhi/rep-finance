@@ -1289,15 +1289,16 @@ def wa_backup_down():
     if os.path.isdir(WA_SESSION_DIR) and os.listdir(WA_SESSION_DIR):
         return  # lokale sessie is leidend
     try:
-        import shutil
         import zipfile
         from huggingface_hub import hf_hub_download
         p = hf_hub_download(repo_id=HF_DATASET, repo_type="dataset",
                             filename="wa-session.zip", token=HF_TOKEN)
         os.makedirs(WA_SESSION_DIR, exist_ok=True)
         with zipfile.ZipFile(p) as z:
+            namen = z.namelist()
             z.extractall(WA_SESSION_DIR)
-        print("wa-sessie hersteld uit HF dataset")
+        print(f"wa-sessie hersteld uit HF dataset: {len(namen)} bestanden "
+              f"(creds.json aanwezig: {'creds.json' in namen})")
     except Exception as e:  # noqa: BLE001
         print("wa backup down failed:", e)
 
