@@ -47,6 +47,12 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()  # gratis ASR: whisper
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "").strip()  # Voxtral ASR (beste quadrant)
 MISTRAL_ASR_MODEL = os.environ.get("MISTRAL_ASR_MODEL", "voxtral-small-latest")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()  # gratis ASR via AI Studio
+WHATSAPP_ENABLED = os.environ.get("WHATSAPP_ENABLED", "0") == "1"  # Baileys-bridge start via start.sh
+WA_TAKEOVER_HOURS = float(os.environ.get("WA_TAKEOVER_HOURS", "12"))  # pauze na handmatig antwoord
+WA_IMG_REPLY = os.environ.get(
+    "WA_IMG_REPLY",
+    "Ontvangen 👍 Zet er even tekst bij (wat zoek je, kleur/maat)? Dan pak ik het direct op.").strip()
+WA_SESSION_DIR = os.environ.get("WA_SESSION_DIR", os.path.join("data", "whatsapp-session"))
 
 ORDER_STATUSES = ["interesse", "info_gevraagd", "prijs_gegeven", "wacht_op_antwoord",
                   "te_bestellen", "besteld", "onderweg", "binnen", "verpakken", "klaar",
@@ -359,7 +365,7 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}}}},
 ]
 
-SYSTEM_AGENT = """Je bent Rep Agent, de boekhoudmaat van Younes: hij verkoopt reps (kleding, sneakers, sets) via Snapchat en Telegram en inkoopt via basetao. Je praat in zijn taal: kort, casual, Nederlands, max ~4 regels, emoji's zijn oké.
+SYSTEM_AGENT = """Je bent Rep Agent, de boekhoudmaat van Younes: hij verkoopt reps (kleding, sneakers, sets) via Snapchat, WhatsApp en Telegram en inkoopt via basetao. Je praat in zijn taal: kort, casual, Nederlands, max ~4 regels, emoji's zijn oké.
 
 Werkwijze:
 - Voeg geld, kosten en orders direct toe of werk ze bij met de tools. Vraag niet om toestemming voor iets wat duidelijk is.
@@ -874,7 +880,7 @@ async def access_gate(request: Request, call_next):
     gated = (path.startswith("/admin") or path.startswith("/api")
              or path.startswith("/stats") or path.startswith("/orders")
              or path.startswith("/basetao") or path.startswith("/docs")
-             or path.startswith("/openapi"))
+             or path.startswith("/openapi") or path.startswith("/whatsapp"))
     if ACCESS_CODE and gated:
         code = (request.query_params.get("key")
                 or request.headers.get("x-access-code")
@@ -887,6 +893,7 @@ async def access_gate(request: Request, call_next):
 @app.on_event("startup")
 def _start():
     hf_sync_down()
+    wa_backup_down()
     threading.Thread(target=poll_loop, daemon=True).start()
 
 SHOP = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
@@ -966,7 +973,8 @@ def admin():
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "bot_configured": bool(TELEGRAM_TOKEN)}
+    return {"ok": True, "bot_configured": bool(TELEGRAM_TOKEN),
+            "whatsapp": WA_STATE["status"] if WHATSAPP_ENABLED else "uit"}
 
 @app.get("/stats")
 def stats():
@@ -1185,6 +1193,234 @@ async def api_order_delete(num: int):
         ledger_save(d)
         hf_sync_up()
     return JSONResponse({"ok": True})
+
+# ---------------- whatsapp (Baileys-bridge) ----------------
+# De Node-bridge (whatsapp-bridge/bridge.js) koppelt het bestaande WhatsApp-nummer
+# als "gekoppeld apparaat" (zoals WhatsApp Web) en post hier inkomende berichten.
+# Typ Younes zelf iets in een chat (vanaf zijn telefoon), dan pauzeert de bot voor
+# die chat zodat hij het gesprek handmatig kan overnemen. "/bot uit" = 7 dagen,
+# "/bot aan" = weer inschakelen. Pauzes leven mee in ledger.json (overleeft restarts).
+WA_STATE = {"qr": None, "qr_ts": 0.0, "status": "startend" if WHATSAPP_ENABLED else "uit",
+            "error": "", "backup_ts": 0.0}
+
+def _wa_key(jid):
+    return str(jid or "").split("@")[0].split(":")[0]
+
+def _wa_pause_map(d):
+    paused = d.setdefault("whatsapp", {}).setdefault("paused", {})
+    now = time.time()
+    for k in [k for k, v in paused.items() if float(v or 0) < now]:
+        paused.pop(k, None)
+    return paused
+
+def wa_is_paused(jid):
+    with _ledlock:
+        d = ledger_load()
+    return _wa_key(jid) in _wa_pause_map(d)
+
+def wa_pause(jid, hours=None, clear=False):
+    with _ledlock:
+        d = ledger_load()
+        paused = _wa_pause_map(d)
+        k = _wa_key(jid)
+        if clear:
+            paused.pop(k, None)
+        else:
+            paused[k] = time.time() + (hours if hours is not None else WA_TAKEOVER_HOURS) * 3600.0
+        ledger_save(d)
+        hf_sync_up()
+
+def wa_backup_up():
+    """Baileys-sessie meesturen naar de HF-dataset, zodat een redeploy geen
+    nieuwe QR-scan vereist (sessie wordt bij het opstarten teruggezet)."""
+    if not (HF_DATASET and HF_TOKEN):
+        return
+    try:
+        import zipfile
+        from huggingface_hub import HfApi
+        zpath = os.path.join(os.environ.get("TMPDIR", "/tmp"), "wa-session.zip")
+        if os.path.exists(zpath):
+            os.remove(zpath)
+        os.makedirs(WA_SESSION_DIR, exist_ok=True)
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+            for root, _dirs, files in os.walk(WA_SESSION_DIR):
+                for fn in files:
+                    full = os.path.join(root, fn)
+                    z.write(full, os.path.relpath(full, WA_SESSION_DIR))
+        HfApi(token=HF_TOKEN).upload_file(
+            path_or_fileobj=zpath, path_in_repo="wa-session.zip",
+            repo_id=HF_DATASET, repo_type="dataset")
+        print("wa-sessie gebackupt naar HF dataset")
+    except Exception as e:  # noqa: BLE001
+        print("wa backup up failed:", e)
+
+def wa_backup_down():
+    """Bij start: eerder gegpairde sessie uit de HF-dataset terugzetten (als de
+    lokale sessie weg is, bijv. na een redeploy op een verse container)."""
+    if not (HF_DATASET and HF_TOKEN):
+        return
+    if os.path.isdir(WA_SESSION_DIR) and os.listdir(WA_SESSION_DIR):
+        return  # lokale sessie is leidend
+    try:
+        import shutil
+        import zipfile
+        from huggingface_hub import hf_hub_download
+        p = hf_hub_download(repo_id=HF_DATASET, repo_type="dataset",
+                            filename="wa-session.zip", token=HF_TOKEN)
+        os.makedirs(WA_SESSION_DIR, exist_ok=True)
+        with zipfile.ZipFile(p) as z:
+            z.extractall(WA_SESSION_DIR)
+        print("wa-sessie hersteld uit HF dataset")
+    except Exception as e:  # noqa: BLE001
+        print("wa backup down failed:", e)
+
+@app.post("/whatsapp/incoming")
+async def wa_incoming(req: Request):
+    """Inkomend WhatsApp-bericht van de bridge -> antwoord (of None = zwijgen)."""
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "ongeldige json"}, status_code=400)
+    jid = str(b.get("chat") or "")
+    if not jid:
+        return JSONResponse({"ok": False, "error": "chat ontbreekt"}, status_code=400)
+    key = _wa_key(jid)
+    text = (b.get("text") or "").strip()
+    mtype = b.get("type") or "text"
+
+    if b.get("from_me"):
+        low = text.lower()
+        if low in ("/bot aan", "bot aan"):
+            wa_pause(jid, clear=True)
+            return JSONResponse({"reply": "🤖 Bot weer AAN in deze chat.", "to_me": True})
+        if low in ("/bot uit", "bot uit"):
+            wa_pause(jid, hours=24 * 7)
+            return JSONResponse({"reply": "🤖 Bot UIT in deze chat (7 dagen). "
+                                          "Typ 'bot aan' om weer in te schakelen.", "to_me": True})
+        wa_pause(jid)  # human takeover: jij hebt zelf geantwoord
+        return JSONResponse({"reply": None, "note": f"pauze {WA_TAKEOVER_HOURS:g}u"})
+
+    if wa_is_paused(jid):
+        return JSONResponse({"reply": None, "note": "pauze"})
+
+    if mtype == "audio":
+        b64 = b.get("audio_b64") or ""
+        if not b64:
+            return JSONResponse({"reply": None})
+        path = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"wa_{int(time.time() * 1000)}.ogg")
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(b64))
+        try:
+            text = await asyncio.to_thread(transcribe, path)
+        except Exception as e:  # noqa: BLE001
+            print("wa asr error:", e)
+            return JSONResponse({"reply": "Stemmetje kon ik niet verwerken 🙈 typ even wat je zoekt."})
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        if not text:
+            return JSONResponse({"reply": "❓ Geen spraak herkend, typ even."})
+    elif mtype == "image":
+        if not text:
+            return JSONResponse({"reply": WA_IMG_REPLY})
+
+    if not text:
+        return JSONResponse({"reply": None})
+    try:
+        answer = await asyncio.to_thread(agent_reply, "wa:" + key, text)
+    except Exception as e:  # noqa: BLE001
+        print("wa agent error:", e)
+        return JSONResponse({"reply": None})  # stil falen; Younes ziet de chat in de app
+    return JSONResponse({"reply": answer})
+
+@app.post("/whatsapp/qr")
+async def wa_qr_post(req: Request):
+    """Bridge post hier elke nieuwe QR (data-URL)."""
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False}, status_code=400)
+    WA_STATE["qr"] = b.get("qr") or None
+    WA_STATE["qr_ts"] = time.time()
+    WA_STATE["status"] = "wacht op scan"
+    return JSONResponse({"ok": True})
+
+@app.get("/whatsapp/qr")
+async def wa_qr_get():
+    return JSONResponse({"status": WA_STATE["status"], "qr": WA_STATE["qr"],
+                         "qr_age": int(time.time() - WA_STATE["qr_ts"]) if WA_STATE["qr"] else None,
+                         "error": WA_STATE["error"], "enabled": WHATSAPP_ENABLED})
+
+@app.post("/whatsapp/status")
+async def wa_status_post(req: Request):
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False}, status_code=400)
+    st = str(b.get("status") or "")
+    if st:
+        WA_STATE["status"] = st
+    WA_STATE["error"] = str(b.get("error") or "")
+    if st == "connected":
+        WA_STATE["qr"] = None
+        if (HF_DATASET and HF_TOKEN and time.time() - WA_STATE["backup_ts"] > 60):
+            WA_STATE["backup_ts"] = time.time()
+
+            def _bk():
+                time.sleep(20)  # laat Baileys eerst alles wegschrijven
+                wa_backup_up()
+            threading.Thread(target=_bk, daemon=True).start()
+    return JSONResponse({"ok": True})
+
+@app.get("/whatsapp/status")
+async def wa_status_get():
+    with _ledlock:
+        d = ledger_load()
+    return JSONResponse({"status": WA_STATE["status"], "enabled": WHATSAPP_ENABLED,
+                         "error": WA_STATE["error"],
+                         "gepauzeerde_chats": len(_wa_pause_map(d)),
+                         "takeover_uren": WA_TAKEOVER_HOURS})
+
+WA_QR_PAGE = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WhatsApp koppelen — Rep Agent</title><style>
+body{font-family:system-ui,Segoe UI,sans-serif;background:#0f1716;color:#e8efec;margin:0;padding:24px;max-width:560px}
+h1{font-size:20px}.sub{color:#8aa39c;font-size:13px}
+.card{background:#182522;border:1px solid #24382f;border-radius:12px;padding:18px;margin-top:16px}
+input{background:#0c1210;border:1px solid #2b463c;color:#e8efec;border-radius:8px;padding:10px;width:100%;box-sizing:border-box}
+button{background:#25d366;border:0;border-radius:8px;padding:10px 16px;font-weight:700;cursor:pointer;margin-top:10px}
+#qr{max-width:320px;width:100%;background:#fff;border-radius:12px;padding:10px;margin-top:12px}
+#stat{font-size:14px;margin-top:10px}
+ol{color:#c8d6d1;font-size:14px;line-height:1.6}
+.note{color:#8aa39c;font-size:12px;margin-top:14px}
+</style></head><body>
+<h1>📱 WhatsApp koppelen</h1>
+<div class="sub">Koppel je bestaande nummer als apparaat — je telefoon blijft gewoon werken.</div>
+<div class="card"><input id="key" placeholder="toegangscode"><button onclick="save()">Opslaan</button>
+<div id="stat">laden…</div><img id="qr" style="display:none" alt="QR-code">
+<ol><li>Open <b>WhatsApp</b> op je telefoon</li><li><b>Instellingen → Gekoppelde apparaten → Apparaat koppelen</b></li>
+<li>Scan deze QR-code (ververst elke 20 seconden)</li></ol>
+<div class="note">Na het koppelen blijft alles gewoon zichtbaar op je telefoon.<br>
+Reageer jij zelf in een chat? Dan stopt de bot daar voor __TAKEOVER__ uur.<br>
+Typ <b>bot uit</b> in een chat = bot 7 dagen uit · <b>bot aan</b> = weer aan.</div>
+</div>
+<script>let K=new URLSearchParams(location.search).get('key')||(document.cookie.split('; ').find(r=>r.startsWith('key='))||'').slice(4)||'';
+if(K)document.getElementById('key').value=K;
+function save(){K=document.getElementById('key').value.trim();document.cookie='key='+K+';path=/;max-age=31536000';tick();}
+async function tick(){try{const r=await fetch('/whatsapp/qr',{headers:{'X-Access-Code':K}});
+if(r.status===401){document.getElementById('stat').textContent='Eerst je toegangscode invullen.';document.getElementById('qr').style.display='none';return;}
+const d=await r.json();const s=document.getElementById('stat');const q=document.getElementById('qr');
+if(d.status==='connected'){s.textContent='✅ WhatsApp is verbonden! Je kunt dit tabblad sluiten.';q.style.display='none';}
+else if(d.qr&&String(d.qr).startsWith('data:image')){s.textContent='⏳ Wachten op scan… (QR '+d.qr_age+'s oud)';q.src=d.qr;q.style.display='block';}
+else if(d.status==='uitgelogd'){s.textContent='Sessie verlopen — herstart de service en koppel opnieuw.';q.style.display='none';}
+else{s.textContent='⏳ Status: '+d.status+' — QR verschijnt vanzelf…';q.style.display='none';}}catch(e){document.getElementById('stat').textContent='geen verbinding met de bridge…';}}
+setInterval(tick,5000);tick();</script></body></html>"""
+
+@app.get("/wa-qr", response_class=HTMLResponse, include_in_schema=False)
+def wa_qr_page():
+    return HTMLResponse(WA_QR_PAGE.replace("__TAKEOVER__", f"{WA_TAKEOVER_HOURS:g}"))
 
 # ---------------- checkout via basetao wallet ----------------
 BASETAO_BASE = "https://www.basetao.com/best-taobao-agent-service"
