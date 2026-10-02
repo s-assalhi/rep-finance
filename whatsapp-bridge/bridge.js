@@ -141,11 +141,26 @@ async function handleMessage(sock, m, seen) {
 
   const reply = resp && resp.reply;
   const toMe = resp && resp.to_me;
+  const images = (resp && Array.isArray(resp.images) && resp.images) || [];
   if (reply && (!fromMe || toMe)) {
     try {
       await sock.sendPresenceUpdate('composing', jid);
       await new Promise((res) => setTimeout(res, 800 + Math.random() * 1400));
-      for (const part of chunks(reply)) {
+      let rest = reply;
+      if (images.length) {
+        // eerste foto direct meesturen (al gecropt door de doppel-bridge), rest als tekst
+        const caption = chunks(rest, 900)[0] || '';
+        try {
+          await sock.sendMessage(jid, { image: Buffer.from(images[0], 'base64'), caption });
+          rest = rest.slice(caption.length).replace(/^\s+/, '');
+          for (const extra of images.slice(1, 3)) {
+            await sock.sendMessage(jid, { image: Buffer.from(extra, 'base64') });
+          }
+        } catch (e) {
+          log('foto versturen mislukt:', e.message);
+        }
+      }
+      for (const part of chunks(rest)) {
         await sock.sendMessage(jid, { text: part });
         await new Promise((res) => setTimeout(res, 350));
       }
