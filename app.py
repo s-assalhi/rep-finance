@@ -1450,6 +1450,24 @@ async def wa_status_get():
                          "gepauzeerde_chats": len(_wa_pause_map(d)),
                          "takeover_uren": WA_TAKEOVER_HOURS})
 
+@app.post("/whatsapp/logout")
+async def wa_logout_post():
+    """Apparaat is op de telefoon afgemeld: de (nu dode) sessie ook uit de
+    HF-backup wissen, zodat een herstart niet per ongeluk de oude sessie
+    terugzet en de bridge in een 401-loop blijft hangen."""
+    WA_STATE["status"] = "uitgelogd"
+    WA_STATE["pair_code"] = None
+    WA_STATE["qr"] = None
+    if HF_DATASET and HF_TOKEN:
+        try:
+            from huggingface_hub import HfApi
+            HfApi(token=HF_TOKEN).delete_file(
+                path_in_repo="wa-session.zip", repo_id=HF_DATASET, repo_type="dataset")
+            print("dode wa-sessie uit HF dataset verwijderd")
+        except Exception as e:  # noqa: BLE001
+            print("wa logout cleanup failed:", e)
+    return JSONResponse({"ok": True})
+
 WA_QR_PAGE = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WhatsApp koppelen — Rep Agent</title><style>
