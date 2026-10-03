@@ -393,6 +393,7 @@ Vaste feiten:
 - Voetbalshirt custom (naam + rugnummer): €30. Set (shirt + broekje): €40. ALO Runner: €155. Levertijd 2-3 weken.
 - Betalen: bij ontvangst (vaste klanten) of 50/50 vooraf (nieuw). Maten: bij twijfel vraag lengte + gewicht.
 Werkwijze:
+- Taal: je antwoordt ALTIJD in het Nederlands, ook als de klant Engels of een andere taal schrijft. Alleen Engels als de klant er expliciet om vraagt.
 - Vraag naar prijs van iets dat je niet zeker weet: geef de vaste prijzen hierboven; anders zeg je "ik check de prijs voor je" en noteer je de aanvraag als order (create_order, status interesse, prijs nog 0).
 - Wil een klant iets specifieks (merk/model/kleur/maat)? Gebruik de zoek_qc tool en noem de beste match kort met prijs en de QC-fotolink. Geen resultaten? Zeg dat je het even laat weten.
 - Neem bestellingen op met create_order (klantnaam, items, prijs) en bevestig kort wat je hebt genoteerd.
@@ -1328,6 +1329,15 @@ def wa_backup_down():
     except Exception as e:  # noqa: BLE001
         print("wa backup down failed:", e)
 
+WA_WELCOME = """Yo, welkom bij YZ Shop
+
+Stuur eerst je voornaam, zodat ik weet met wie ik app — WhatsApp toont soms alleen een nummer. Stuur daarna je Snapchatnaam, plus een foto of link van wat je zoekt en je maat.
+
+Voetbalshirt met bedrukking: €30
+Met broekje: €40
+
+Stuur voor de bedrukking ook de naam en het rugnummer door. Ik app je zo terug!"""
+
 @app.post("/whatsapp/incoming")
 async def wa_incoming(req: Request):
     """Inkomend WhatsApp-bericht van de bridge -> antwoord (of None = zwijgen)."""
@@ -1358,6 +1368,19 @@ async def wa_incoming(req: Request):
 
     if wa_is_paused(jid):
         return JSONResponse({"reply": None, "note": "pauze"})
+
+    # Eerste bericht van dit nummer ooit -> welkomstbericht van Younes (1x per nummer,
+    # staat in de ledger dus dit overleeft restarts/redeploys).
+    with _ledlock:
+        d = ledger_load()
+        welcomed = d.setdefault("whatsapp", {}).setdefault("welcomed", {})
+        is_new = key not in welcomed
+        if is_new:
+            welcomed[key] = True
+            ledger_save(d)
+    if is_new:
+        threading.Thread(target=hf_sync_up, daemon=True).start()
+        return JSONResponse({"reply": WA_WELCOME})
 
     if mtype == "audio":
         b64 = b.get("audio_b64") or ""
