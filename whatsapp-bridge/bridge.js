@@ -18,6 +18,7 @@
  */
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 
 const baileys = require('@whiskeysockets/baileys');
 const makeWASocket = baileys.default;
@@ -48,6 +49,35 @@ const seen = new Set();
 const mySends = new Set();
 const MSG_MAX_AGE_MS = 120000;    // klantberichten ouder dan 2 min -> niet beantwoorden
 const MSG_MAX_AGE_ME_MS = 600000; // eigen notities mogen tot 10 min later verwerkt worden
+const SEND_PORT = Number(process.env.SEND_PORT || 7861);
+
+let activeSock = null; // actieve verbinding, voor de /send-server
+
+// Kleine HTTP-server: de Python-backend (en tests) kunnen hier berichten
+// laten versturen: POST /send {"to": "<nummer|jid>", "text": "..."}
+http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/send') {
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 100000) req.destroy(); });
+    req.on('end', async () => {
+      try {
+        const { to, text } = JSON.parse(body || '{}');
+        if (!activeSock || !to || !text) throw new Error('niet verbonden of to/text ontbreekt');
+        const jid = String(to).includes('@') ? to : `${String(to).replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+        const s = await activeSock.sendMessage(jid, { text: String(text) });
+        if (s && s.key && s.key.id) mySends.add(s.key.id);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: false, error: 'not found' }));
+}).listen(SEND_PORT, '127.0.0.1', () => log('send-server op 127.0.0.1:' + SEND_PORT));
 
 function log(...args) {
   console.log(new Date().toISOString(), ...args);
@@ -244,6 +274,7 @@ async function start(backoffMs = 3000) {
     markOnlineOnConnect: false,
     syncFullHistory: false,
   });
+  activeSock = sock;
 
   // seen/mySends zijn module-globaal (bovenaan dit bestand) zodat ze een
   // herverbinding overleven.
