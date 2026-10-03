@@ -160,21 +160,24 @@ async function handleMessage(sock, m, seen, mySends) {
 
   const reply = resp && resp.reply;
   const toMe = resp && resp.to_me;
+  // to_chat: antwoord naar een ANDERE chat sturen (bijv. jouw notitie-bevestiging
+  // naar je 'bericht jezelf'-chat i.p.v. de chat van de klant)
+  const target = (resp && resp.to_chat) || jid;
   const images = (resp && Array.isArray(resp.images) && resp.images) || [];
   if (reply && (!fromMe || toMe)) {
     try {
-      await sock.sendPresenceUpdate('composing', jid);
+      await sock.sendPresenceUpdate('composing', target);
       await new Promise((res) => setTimeout(res, 800 + Math.random() * 1400));
       let rest = reply;
       if (images.length) {
         // eerste foto direct meesturen (al gecropt door de doppel-bridge), rest als tekst
         const caption = chunks(rest, 900)[0] || '';
         try {
-          const s1 = await sock.sendMessage(jid, { image: Buffer.from(images[0], 'base64'), caption });
+          const s1 = await sock.sendMessage(target, { image: Buffer.from(images[0], 'base64'), caption });
           if (s1 && s1.key && s1.key.id) mySends.add(s1.key.id);
           rest = rest.slice(caption.length).replace(/^\s+/, '');
           for (const extra of images.slice(1, 3)) {
-            const s2 = await sock.sendMessage(jid, { image: Buffer.from(extra, 'base64') });
+            const s2 = await sock.sendMessage(target, { image: Buffer.from(extra, 'base64') });
             if (s2 && s2.key && s2.key.id) mySends.add(s2.key.id);
           }
         } catch (e) {
@@ -182,12 +185,12 @@ async function handleMessage(sock, m, seen, mySends) {
         }
       }
       for (const part of chunks(rest)) {
-        const s3 = await sock.sendMessage(jid, { text: part });
+        const s3 = await sock.sendMessage(target, { text: part });
         if (s3 && s3.key && s3.key.id) mySends.add(s3.key.id);
         await new Promise((res) => setTimeout(res, 350));
       }
       if (mySends.size > 600) mySends.clear();
-      await sock.sendPresenceUpdate('paused', jid);
+      await sock.sendPresenceUpdate('paused', target);
     } catch (e) {
       log('versturen mislukt:', e.message);
     }
