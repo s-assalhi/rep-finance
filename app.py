@@ -480,6 +480,17 @@ TOOLS = [
             "ontbreekt": {"type": "string", "description": "wat je nog nodig hebt, bijv. 'foto, maat (lengte+gewicht)' of 'leeg'"},
             "status": {"type": "string", "description": "kort: nieuw / wacht_op_info / prijs_gegeven / klaar_voor_bestelling / besteld / afgerond"}},
             "required": []}}},
+    {"type": "function", "function": {
+        "name": "vraag_younes",
+        "description": "Stel een vraag rechtstreeks aan Younes in zijn eigen WhatsApp-chat "
+                       "(bijv. een prijs die je niet weet, of een vraag waar je het antwoord "
+                       "niet van weet). Je antwoord gaat als melding naar hem; zijn antwoord "
+                       "wordt automatisch naar de klant doorgestuurd. Je krijgt eventueel een "
+                       "BEKENDE PRIJS terug die je meteen mag noemen.",
+        "parameters": {"type": "object", "properties": {
+            "vraag": {"type": "string", "description": "korte vraag, bijv. 'prijs van: Nike Dunk Low groen maat 43'"},
+            "klant": {"type": "string", "description": "naam van de klant die vroeg"}},
+            "required": ["vraag"]}}},
 ]
 
 SYSTEM_AGENT = """Je bent Rep Agent, de boekhoudmaat van Younes: hij verkoopt reps (kleding, sneakers, sets) via Snapchat, WhatsApp en Telegram en inkoopt via basetao. Je praat in zijn taal: kort, casual, Nederlands, max ~4 regels, emoji's zijn oké.
@@ -511,7 +522,8 @@ Werkwijze:
   3. Voetbalshirt/set: bedrukking = naam + rugnummer.
   4. Eenmalig, vroeg in het gesprek: "zet even je verdwijnende berichten uit in deze chat, dan blijft ons gesprek staan."
   Klanten moeten SPECIFIEK zijn: vaag ("wil graag zoiets") = doorvragen tot je het exact kunt opschrijven.
-- PRIJZEN — cruciaal: ALLEEN shirt €30 en set €40 mag je noemen. ALLES ANDERS (ALO, schoenen, tassen, hoodies, brillen, jassen, andere sneakers...) = NOOIT een bedrag noemen, ook geen schatting of "ongeveer". Altijd: "die prijs moet ik even voor je checken, ik kom erop terug 👍" en prijs_gegeven=false. Heeft Younes al een prijs genoemd in dit gesprek (chat_status: prijs_afgesproken)? Dan is DIE leidend en herhaal je die exact.
+- PRIJZEN — cruciaal: ALLEEN shirt €30 en set €40 mag je noemen. ALLES ANDERS (ALO, schoenen, tassen, hoodies, brillen, jassen, andere sneakers...) = NOOIT een bedrag bedenken. Roep vraag_younes aan ("prijs van: <product> maat <maat>") — krijg je een BEKENDE PRIJS terug dan mag je die meteen noemen; anders zeg je: "ik check het even bij Younes, ik kom erop terug 👍". Younes' antwoord komt automatisch bij de klant, daar hoef je niet meer naar om te kijken. Heeft Younes al een prijs genoemd in dit gesprek (chat_status: prijs_afgesproken)? Dan is DIE leidend en herhaal je die exact.
+- WEET JE HET ANTWOORD NIET (random vragen, andere kleur kunnen, levertijd van iets specifieks, etc.)? Roep vraag_younes aan met de korte vraag — Younes antwoordt en het gaat automatisch naar de klant. Zeg zelf alleen: "dat check ik even voor je 👍".
 - Wil een klant iets specifieks (merk/model/kleur)? Gebruik zoek_qc en toon de beste match kort (max 2 regels + foto). De prijzen uit zoek_qc zijn INKOOPprijzen — NOOIT tegen de klant noemen. Geen resultaten? "Laat ik even kijken, ik hoor zo van je."
 - Is de intake compleet (wat + foto + maat + bedrukking + prijs duidelijk)? Bevestig kort dat je het bij Younes inwerkt en maak een create_order aan (prijs alleen invullen als die afgesproken is).
 - Roep aan het eind van ELKE klant-ronde chat_status aan met wat je nu weet (klantnaam, gezocht, maat, prijs, foto, ontbreekt, status).
@@ -615,6 +627,32 @@ def run_tool(name, args_json, chat_key=None):
                 ledger_save(d)
                 hf_sync_up()
             return "klantoverzicht bijgewerkt"
+        if name == "vraag_younes":
+            if not chat_key or not chat_key.startswith("wa:"):
+                return "vraag_younes werkt alleen in WhatsApp-chats"
+            vraag = str(a.get("vraag") or "?").strip()[:300]
+            with _ledlock:
+                d = ledger_load()
+                pend = d.setdefault("whatsapp", {}).setdefault("pending", [])
+                for p in pend:
+                    if not p.get("answered") and p.get("chat_key") == chat_key and p.get("vraag") == vraag:
+                        return "deze vraag staat al aan Younes voorgelegd — zeg de klant dat je hem terugappt"
+                n = 1 + max([p.get("n", 0) for p in pend] or [0])
+                c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(chat_key[3:], {})
+                naam = str(a.get("klant") or c.get("klantnaam") or c.get("naam")
+                           or ("+" + chat_key[3:]))[:60]
+                pend.append({"n": n, "chat_key": chat_key, "klant": naam, "vraag": vraag,
+                             "ts": _now(), "answered": False})
+                ledger_save(d)
+                hf_sync_up()
+            bek = ""
+            for prod, pr in (d.get("whatsapp", {}).get("prijzen") or {}).items():
+                if prod and prod in vraag.lower():
+                    bek += f" BEKENDE PRIJS ({prod}): €{pr:g} — deze mag je WEL noemen."
+            _stuur_via_bridge(WA_SELF_JID,
+                              f"❓ {naam} vroeg: {vraag}\n→ antwoord met: antwoord {n} <je antwoord>")
+            return ("Vraag staat bij Younes." + bek +
+                    " Zeg tegen de klant: 'ik check het even, ik kom erop terug 👍'")
         if name == "create_order":
             with _ledlock:
                 d = ledger_load()
@@ -1576,6 +1614,37 @@ def wa_backup_down():
 
 WA_SELF_JID = "31684805378@s.whatsapp.net"  # 'bericht jezelf'-chat: notitie-bevestigingen landen hier
 
+def _stuur_via_bridge(to, tekst):
+    """Bericht direct via de bridge versturen (bericht-jezelf of een klant-chat)."""
+    try:
+        r = requests.post("http://127.0.0.1:7861/send",
+                          json={"to": to, "text": tekst}, timeout=25)
+        return r.ok
+    except Exception as e:  # noqa: BLE001
+        print("stuur via bridge faalde:", e)
+        return False
+
+def _bing_afbeeldingen(q, n=2):
+    """Fallback productfoto's via Bing Images (als de doppel-bridge offline is).
+    Geeft dataURL's terug die direct via WhatsApp verstuurd kunnen worden."""
+    r = requests.get("https://www.bing.com/images/search", params={"q": q, "form": "HDRSC2"},
+                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"},
+                     timeout=15)
+    urls = re.findall(r'"murl":"(https?://[^"]+)"', r.text)
+    out = []
+    for u in urls:
+        if len(out) >= n:
+            break
+        try:
+            ir = requests.get(u.replace("\\u0026", "&"), timeout=12,
+                              headers={"User-Agent": "Mozilla/5.0"})
+            if ir.ok and len(ir.content) > 8000:
+                out.append("data:image/jpeg;base64," + base64.b64encode(ir.content).decode())
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
 WA_WELCOME = """Yo, welkom bij YZ Shop
 
 Stuur eerst je voornaam, zodat ik weet met wie ik app — WhatsApp toont soms alleen een nummer. Stuur daarna je Snapchatnaam, plus een foto of link van wat je zoekt en je maat.
@@ -1621,6 +1690,57 @@ async def wa_incoming(req: Request):
             wa_pause(jid, hours=24 * 7)
             return JSONResponse({"reply": "🤖 Bot UIT in deze chat (7 dagen). "
                                           "Typ 'bot aan' om weer in te schakelen.", "to_me": True})
+        # Openstaande klantvragen: "open vragen" -> lijst met nummers
+        if low in ("open vragen", "vragen", "openstaande vragen"):
+            with _ledlock:
+                d = ledger_load()
+            pend = [p for p in d.get("whatsapp", {}).get("pending", []) if not p.get("answered")]
+            if not pend:
+                txt = "Geen open vragen 👍"
+            else:
+                txt = "❓ Open vragen:\n" + "\n".join(
+                    f"#{p['n']} {p['klant']}: {p['vraag']} [{str(p['ts'])[11:16]}]"
+                    for p in pend[-10:])
+            return JSONResponse({"reply": txt, "to_me": True, "to_chat": WA_SELF_JID})
+        # Jouw antwoord op een doorgestuurde klantvraag: "antwoord 2 kost 130, stuur ik vanavond"
+        if low.startswith("antwoord"):
+            rest = text[len("antwoord"):].strip()
+            mm = re.match(r"(\d+)\s+(.+)", rest, re.S)
+            if not mm:
+                return JSONResponse({"reply": "📝 Format: antwoord <nummer> <je antwoord> "
+                                              "(nummers: stuur 'open vragen')",
+                                     "to_me": True, "to_chat": WA_SELF_JID})
+            n, antw = int(mm.group(1)), mm.group(2).strip()[:600]
+            with _ledlock:
+                d = ledger_load()
+                pend = d.get("whatsapp", {}).get("pending", [])
+                hit = next((p for p in reversed(pend)
+                            if p.get("n") == n and not p.get("answered")), None)
+                if not hit:
+                    return JSONResponse({"reply": f"Vraag #{n} niet gevonden (al beantwoord?).",
+                                         "to_me": True, "to_chat": WA_SELF_JID})
+                hit["answered"] = True
+                hit["antwoord"] = antw
+                mp = re.search(r"€\s?(\d+(?:[.,]\d{1,2})?)", antw)
+                bedrag = float(mp.group(1).replace(",", ".")) if mp else None
+                # prijs-geheugen: prijzen die je een keer geeft, weet de bot voortaan zelf
+                if bedrag and re.search(r"prijs|kosten|hoeveel", hit.get("vraag", ""), re.I):
+                    vm = re.search(r"(?:prijs|kosten)\s*(?:van)?\s*[:\-]?\s*(.+)",
+                                   hit.get("vraag", ""), re.I)
+                    prod = (vm.group(1) if vm else hit.get("vraag", ""))[:60].strip(" ?.")
+                    d.setdefault("whatsapp", {}).setdefault("prijzen", {})[prod.lower()] = bedrag
+                c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(
+                    hit["chat_key"][3:], {})
+                if bedrag:
+                    c["prijs_afgesproken"] = bedrag
+                    c["prijs_gegeven"] = True
+                ledger_save(d)
+                hf_sync_up()
+            threading.Thread(target=_stuur_via_bridge,
+                             args=(hit["chat_key"][3:] + "@s.whatsapp.net", antw),
+                             daemon=True).start()
+            return JSONResponse({"reply": f"✅ Doorgestuurd naar {hit['klant']}: {antw[:80]}",
+                                 "to_me": True, "to_chat": WA_SELF_JID})
         # Dagoverzicht: "stand van vandaag" / "overzicht" -> per klant wat hij wil
         # en wat er nog mist, plus vandaag genoteerde bestellingen.
         if any(kw in low for kw in ("stand van", "overzicht", "wat is de stand", "dagoverzicht")):
@@ -1648,6 +1768,9 @@ async def wa_incoming(req: Request):
                 regels.append("Vandaag besteld: " + ", ".join(
                     f"#{o['num']} {o['customer']} ({o.get('items') or '?'})"
                     for o in bestellingen[-8:]))
+            for p in [p for p in d.get("whatsapp", {}).get("pending", [])
+                      if not p.get("answered")][-8:]:
+                regels.append(f"❓ {p['klant']}: {p['vraag']} → antwoord {p['n']} <antwoord>")
             if not regels:
                 txt = "📋 Nog niks voor vandaag — geen open klant-chats."
             else:
@@ -1777,6 +1900,24 @@ async def wa_incoming(req: Request):
     if imgs:
         resp["images"] = [i.split(",", 1)[-1] for i in imgs]  # dataURL -> ruwe base64
     return JSONResponse(resp)
+
+@app.post("/whatsapp/send")
+async def wa_send(req: Request):
+    """Direct een WhatsApp-bericht versturen via de bridge (test/debug).
+    key in query is verplicht. Body: {"to": "<nummer|jid>", "text": "..."}"""
+    key = req.query_params.get("key", "")
+    if ACCESS_CODE and key != ACCESS_CODE:
+        return JSONResponse({"ok": False, "error": "geen toegang"}, status_code=401)
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "ongeldige json"}, status_code=400)
+    to = str(b.get("to") or "").strip()
+    tekst = str(b.get("text") or "").strip()
+    if not to or not tekst:
+        return JSONResponse({"ok": False, "error": "to en text verplicht"}, status_code=400)
+    ok = await asyncio.to_thread(_stuur_via_bridge, to, tekst)
+    return JSONResponse({"ok": ok})
 
 @app.post("/whatsapp/notify_unreadable")
 async def wa_notify_unreadable(req: Request):
@@ -2081,9 +2222,19 @@ def tool_zoek_qc(query, count=3, chat_key=None):
         time.sleep(3)
     if not res:
         if chat_key and str(chat_key).startswith("wa:"):
-            return ("Zoekdienst tijdelijk offline. Antwoord de klant kort en vriendelijk: "
-                    "'Even voor je checken 👍 ik laat zo snelzaam wat horen.' "
-                    "(intern: doppel-bridge niet bereikt)")
+            # doppel offline -> productfoto's via Bing als fallback naar de klant
+            try:
+                urls = _bing_afbeeldingen(q, 2)
+            except Exception:  # noqa: BLE001
+                urls = []
+            if urls:
+                with _srclock:
+                    _wa_pending_images[chat_key] = urls
+                return ("Bijgaand referentiefoto's van '" + q + "'. DIT zijn geen prijzen — "
+                        "noem er nooit bedragen bij. Zeg: 'dit bedoel je toch? De echte QC-foto's "
+                        "stuur ik zo' en vraag ondertussen naar de maat.")
+            return ("Zeg kort: 'ik pak de foto's even op, ik stuur ze zo 👍' en vraag "
+                    "ondertussen naar de maat. (intern: doppel-bridge offline, geen bing-resultaat)")
         return ("doppel-bridge reageert niet — staat je Chrome open met doppel.fit "
                 "en de Rep Agent userscript aan?")
     if res.get("error") or not res.get("items"):
