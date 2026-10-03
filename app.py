@@ -18,6 +18,7 @@ Env vars (set as Space secrets):
 """
 import asyncio
 import base64
+import io
 import json
 import mimetypes
 import os
@@ -131,42 +132,119 @@ def hf_sync_down():
     except Exception as e:  # noqa: BLE001
         print("hf sync down failed:", e)
 
+# ---------------- voice-notities bewaren (altijd opnieuw transcribeerbaar) ----------------
+_voice_ctx = {}  # chat_id -> file_id van de laatste stemnotitie in die chat
+
+def voice_backup_up(audio_bytes, naam):
+    """Stemnotitie meesturen naar de HF-dataset (audio/<naam>), zodat de audio
+    nooit meer verloren gaat (de notities van 20-09 waren onherstelbaar weg)."""
+    if not (HF_DATASET and HF_TOKEN):
+        return
+    try:
+        from huggingface_hub import HfApi
+        HfApi(token=HF_TOKEN).upload_file(
+            path_or_fileobj=io.BytesIO(audio_bytes),
+            path_in_repo="audio/" + naam, repo_id=HF_DATASET, repo_type="dataset")
+    except Exception as e:  # noqa: BLE001
+        print("voice backup failed:", e)
+
+def voice_note_opslaan(text, source, chat_key=None, file_id=None, audio_bytes=None):
+    """Transcript als note in het kasboek zetten + audio naar HF backuppen."""
+    e = {"ts": _now(), "type": "note", "note": "🎙️ " + text[:1500], "source": source}
+    if file_id:
+        e["voice_file_id"] = file_id
+    if chat_key:
+        e["chat"] = chat_key
+    with _ledlock:
+        d = ledger_load()
+        d.setdefault("entries", []).append(e)
+        ledger_save(d)
+    threading.Thread(target=hf_sync_up, daemon=True).start()
+    if audio_bytes and HF_DATASET and HF_TOKEN:
+        threading.Thread(target=voice_backup_up, daemon=True,
+                         args=(audio_bytes, "voice_%d_%s.ogg" % (int(time.time()), source))).start()
+
 def compute_stats(d):
-    inc_cash = inc_wallet = cost = 0.0
+    inc_cash = inc_bank = inc_wallet = cost = topup = 0.0
     for e in d["entries"]:
         try:
             a = float(e.get("amount_eur") or 0)
         except (TypeError, ValueError):
             continue
-        if e.get("type") == "income":
-            if e.get("method") == "cash":
+        t = e.get("type")
+        if t == "income":
+            m = e.get("method")
+            if m == "cash":
                 inc_cash += a
-            else:
+            elif m == "basetao":
                 inc_wallet += a
-        elif e.get("type") == "cost":
+            else:
+                inc_bank += a  # bank/tikkie/ideal ontvangen
+        elif t == "cost":
             cost += a
-    income = inc_cash + inc_wallet
+        elif t == "topup":
+            topup += a
+    income = inc_cash + inc_bank + inc_wallet
     profit = income - cost
     margin = (profit / income * 100.0) if income else 0.0
     cash_pct = (inc_cash / income * 100.0) if income else 0.0
+    bank_pct = (inc_bank / income * 100.0) if income else 0.0
     open_orders = [o for o in d.get("orders", []) if o.get("payment_status") != "betaald"]
     te_innen = sum(float(o.get("price_eur") or 0) for o in open_orders)
     return dict(
-        inc_cash=round(inc_cash, 2), inc_wallet=round(inc_wallet, 2),
+        inc_cash=round(inc_cash, 2), inc_bank=round(inc_bank, 2),
+        inc_wallet=round(inc_wallet, 2),
         income=round(income, 2), cost=round(cost, 2), profit=round(profit, 2),
+        topup_total=round(topup, 2), topup_vs_cost=round(topup - cost, 2),
         margin_pct=round(margin, 1), cash_pct=round(cash_pct, 1),
-        wallet_pct=round(100 - cash_pct, 1),
+        bank_pct=round(bank_pct, 1), wallet_pct=round(100 - cash_pct - bank_pct, 1),
         gap_pct=round(cash_pct - margin, 1),
         open_orders=len(open_orders), te_innen=round(te_innen, 2))
 
+def monthly_breakdown(d):
+    """Per maand: omzet (cash/bank), topups en kosten — de stort-check."""
+    rows = {}
+    for e in d["entries"]:
+        try:
+            a = float(e.get("amount_eur") or 0)
+        except (TypeError, ValueError):
+            continue
+        maand = (e.get("ts") or "")[:7]
+        if not maand:
+            continue
+        r = rows.setdefault(maand, dict(cash=0.0, bank=0.0, wallet=0.0, topup=0.0, cost=0.0))
+        t = e.get("type")
+        if t == "income":
+            m = e.get("method")
+            if m == "cash":
+                r["cash"] += a
+            elif m == "basetao":
+                r["wallet"] += a
+            else:
+                r["bank"] += a
+        elif t == "cost":
+            r["cost"] += a
+        elif t == "topup":
+            r["topup"] += a
+    out = []
+    for m in sorted(rows):
+        r = rows[m]
+        omzet = r["cash"] + r["bank"] + r["wallet"]
+        out.append(dict(maand=m, omzet=round(omzet, 2), cash=round(r["cash"], 2),
+                        bank=round(r["bank"], 2), topup=round(r["topup"], 2),
+                        cost=round(r["cost"], 2), delta=round(r["topup"] - r["cost"], 2)))
+    return out
+
 def stats_text_nl():
     s = compute_stats(ledger_load())
+    dekking = ("✅ wallet heeft €%g extra" % s["topup_vs_cost"]) if s["topup_vs_cost"] >= 0 \
+        else ("⚠️ nog €%g storten" % abs(s["topup_vs_cost"]))
     return (f"📊 Cash €{s['inc_cash']:g} ({s['cash_pct']}%) | "
+            f"Bank €{s['inc_bank']:g} ({s['bank_pct']}%) | "
             f"Basetao €{s['inc_wallet']:g} ({s['wallet_pct']}%)\n"
-            f"💰 Inkomsten €{s['income']:g} − kosten €{s['cost']:g} = "
-            f"€{s['profit']:g} (marge {s['margin_pct']}%)\n"
-            f"🎯 Cash% − marge% verschil: {s['gap_pct']} pct-punt"
-            + (" ✅ in balans" if abs(s['gap_pct']) < 5 else ""))
+            f"💰 Omzet €{s['income']:g} − kosten €{s['cost']:g} = "
+            f"winst €{s['profit']:g} (marge {s['margin_pct']}%)\n"
+            f"🏦 Topups €{s['topup_total']:g} vs kosten €{s['cost']:g} → {dekking}")
 
 def apply_action(a, raw):
     t = a.get("type", "note")
@@ -185,11 +263,12 @@ def apply_action(a, raw):
     amt = a.get("amount_eur")
     with _ledlock:
         d = ledger_load()
-        if t in ("income", "cost") and amt:
+        if t in ("income", "cost", "topup") and amt:
+            standaard = {"income": "cash", "cost": "basetao", "topup": "ideal"}[t]
             entry = {
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "type": t, "amount_eur": float(amt),
-                "method": a.get("method") or ("cash" if t == "income" else "basetao"),
+                "method": a.get("method") or standaard,
                 "customer": a.get("customer"), "items": a.get("items"),
                 "note": a.get("note") or raw, "source": "telegram",
             }
@@ -216,6 +295,19 @@ def apply_action(a, raw):
 _whisper = None
 
 def transcribe(path):
+    # Groq whisper-large-v3 eerst (snel + beste NL-kwaliteit); Mistral/Gemini/local als fallback
+    if GROQ_API_KEY:
+        with open(path, "rb") as f:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": ("audio.ogg", f, "audio/ogg")},
+                data={"model": "whisper-large-v3", "language": "nl",
+                      "temperature": "0", "response_format": "json"},
+                timeout=120)
+        if r.status_code != 200:
+            raise RuntimeError(f"groq {r.status_code}: {r.text[:140]}")
+        return (r.json().get("text") or "").strip()
     if MISTRAL_API_KEY:
         for lang in ("nl", None):
             with open(path, "rb") as f:
@@ -231,18 +323,6 @@ def transcribe(path):
                 continue  # taalparameter niet ondersteund -> opnieuw zonder
             r.raise_for_status()
             return (r.json().get("text") or "").strip()
-    if GROQ_API_KEY:
-        with open(path, "rb") as f:
-            r = requests.post(
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-                files={"file": ("audio.ogg", f, "audio/ogg")},
-                data={"model": "whisper-large-v3", "language": "nl",
-                      "response_format": "json"},
-                timeout=120)
-        if r.status_code != 200:
-            raise RuntimeError(f"groq {r.status_code}: {r.text[:140]}")
-        return (r.json().get("text") or "").strip()
     if GEMINI_API_KEY:
         with open(path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
@@ -269,9 +349,10 @@ def transcribe(path):
 
 # ---------------- LLM (OpenAI-compatible) ----------------
 SCHEMA_PROMPT = """Je zet Nederlandse berichten om naar bookhoud-acties. Antwoord ONLY met JSON, geen andere tekst:
-{"type":"income|cost|order|query|note","amount_eur":number|null,"method":"cash|basetao"|null,"customer":string|null,"items":string|null,"note":string|null}
+{"type":"income|cost|topup|order|query|note","amount_eur":number|null,"method":"cash|bank|basetao"|null,"customer":string|null,"items":string|null,"note":string|null}
 Regels:
-- "cash" = contant geld (physical euro cash). "basetao" = directe betaling in de basetao-portemonnee.
+- "cash" = contant geld (physical euro cash). "bank" = Tikkie/overboeking/iDEAL dat je ONTVANGT. "basetao" = directe betaling in de basetao-portemonnee.
+- type=topup als Younes zelf geld naar zijn basetao-portemonnee stort (iDEAL-topup voor inkoop).
 - amount_eur altijd in euro's (converteer "lek"/"bale"/"lak" naar eur getal).
 - type=order als iemand iets bestelt of besteld heeft (klant + items + bedrag) maar er nog geen geld ontvangen is.
 - type=query als er om totalen/overzicht gevraagd wordt; type=note als het geen inkomsten/kosten/bestelling/vraag is.
@@ -312,16 +393,23 @@ def llm_chat(messages, tools=None, timeout=150):
 TOOLS = [
     {"type": "function", "function": {
         "name": "add_income",
-        "description": "Registreer ontvangen geld van een klant (contant of direct in de basetao-portemonnee).",
+        "description": "Registreer ontvangen geld van een klant (contant, bank/Tikkie, of direct in de basetao-portemonnee).",
         "parameters": {"type": "object", "properties": {
             "amount_eur": {"type": "number", "description": "bedrag in euro"},
-            "method": {"type": "string", "enum": ["cash", "basetao"]},
+            "method": {"type": "string", "enum": ["cash", "bank", "basetao"]},
             "customer": {"type": "string"},
             "note": {"type": "string"}},
             "required": ["amount_eur", "method"]}}},
     {"type": "function", "function": {
         "name": "add_cost",
         "description": "Registreer een uitgave (bijv. inkoop via basetao of andere kosten).",
+        "parameters": {"type": "object", "properties": {
+            "amount_eur": {"type": "number"}, "note": {"type": "string"}},
+            "required": ["amount_eur"]}}},
+    {"type": "function", "function": {
+        "name": "add_topup",
+        "description": "Registreer dat Younes geld heeft gestort naar zijn basetao-portemonnee "
+                       "(iDEAL-topup). Geen inkomsten — een storting om inkoop te betalen.",
         "parameters": {"type": "object", "properties": {
             "amount_eur": {"type": "number"}, "note": {"type": "string"}},
             "required": ["amount_eur"]}}},
@@ -342,7 +430,7 @@ TOOLS = [
             "num": {"type": "integer"},
             "order_status": {"type": "string"},
             "payment_status": {"type": "string"},
-            "payment_method": {"type": "string", "enum": ["cash", "basetao"]},
+            "payment_method": {"type": "string", "enum": ["cash", "bank", "basetao"]},
             "customer": {"type": "string"}, "items": {"type": "string"},
             "price_eur": {"type": "number"}},
             "required": ["num"]}}},
@@ -385,6 +473,7 @@ Werkwijze:
 - Maten: vraag lengte/gewicht als iemand onduidelijk is over maat.
 - Bij sourcing-vragen ("heb je X", "wat kost Y", klant zoekt iets): gebruik zoek_qc en geef de beste matches kort met prijs en QC-link.
 - Bij "hoeveel/wat is mijn stand"-vragen: gebruik get_stats (en basetao_status) en vat samen.
+- Stort Younes zelf geld naar zijn basetao-wallet (iDEAL)? Gebruik add_topup. Tikkie/overboeking van een klant = add_income met method "bank".
 - Vermeld aan het eind kort wat je hebt gedaan of wat openstaat."""
 
 SYSTEM_WA_KLANT = """Je bent de WhatsApp-assistent van YZ Shop van Younes: premium reps (kleding, sneakers, sets, tassen). Je praat met KLANTEN: kort en casual Nederlands (straattaal mag), max 3-4 regels, emoji's oké.
@@ -459,6 +548,18 @@ def run_tool(name, args_json, chat_key=None):
                 s = compute_stats(d)
                 hf_sync_up()
             return f"kosten €{a.get('amount_eur')} geboekt, marge nu {s['margin_pct']}%"
+        if name == "add_topup":
+            with _ledlock:
+                d = ledger_load()
+                d.setdefault("entries", []).append({
+                    "ts": _now(), "type": "topup", "amount_eur": float(a.get("amount_eur") or 0),
+                    "method": "ideal", "note": a.get("note") or "iDEAL topup basetao",
+                    "source": "telegram"})
+                ledger_save(d)
+                s = compute_stats(d)
+                hf_sync_up()
+            return (f"topup €{a.get('amount_eur')} geboekt | gestort €{s['topup_total']} vs "
+                    f"kosten €{s['cost']} (verschil €{s['topup_vs_cost']})")
         if name == "create_order":
             with _ledlock:
                 d = ledger_load()
@@ -503,9 +604,10 @@ def run_tool(name, args_json, chat_key=None):
             with _ledlock:
                 d = ledger_load()
             s = compute_stats(d)
-            return (f"cash €{s['inc_cash']} ({s['cash_pct']}%) | basetao €{s['inc_wallet']} "
-                    f"({s['wallet_pct']}%) | inkomsten €{s['income']} | kosten €{s['cost']} | "
-                    f"winst €{s['profit']} (marge {s['margin_pct']}%) | open orders {s['open_orders']} "
+            return (f"cash €{s['inc_cash']} ({s['cash_pct']}%) | bank €{s['inc_bank']} "
+                    f"({s['bank_pct']}%) | inkomsten €{s['income']} | kosten €{s['cost']} | "
+                    f"winst €{s['profit']} (marge {s['margin_pct']}%) | topups €{s['topup_total']} "
+                    f"vs kosten €{s['cost']} (€{s['topup_vs_cost']}) | open orders {s['open_orders']} "
                     f"(te innen €{s['te_innen']})")
         if name == "basetao_status":
             w = basetao_wallet(max_age=60) or {}
@@ -605,8 +707,11 @@ def handle_update(msg):
         if not path:
             tg("sendMessage", chat_id=chat_id, text="❌ Kon voicebestand niet ophalen.")
             return
+        audio_bytes = b""
         try:
             text = transcribe(path)
+            with open(path, "rb") as f:
+                audio_bytes = f.read()
         except Exception as e:  # noqa: BLE001
             print("asr error:", e)
             detail = str(e)[:180] or "onbekend"
@@ -621,6 +726,9 @@ def handle_update(msg):
         if not text:
             tg("sendMessage", chat_id=chat_id, text="❓ Geen spraak herkend.")
             return
+        _voice_ctx[str(chat_id)] = media.get("file_id")
+        voice_note_opslaan(text, "telegram", chat_key=str(chat_id),
+                           file_id=media.get("file_id"), audio_bytes=audio_bytes)
         tg("sendMessage", chat_id=chat_id, text=f"🎙️ \"{text}\"")
     elif msg.get("text"):
         text = msg["text"].strip()
@@ -697,7 +805,7 @@ def handle_command(chat_id, text):
             tg("sendMessage", chat_id=chat_id,
                text=(f"📦 Order #{num}: status → {st}" if o else f"❌ Order #{num} niet gevonden."))
             return
-        m = re.match(r"/betaald\s+#?(\d+)(?:\s+(cash|basetao))?", low)
+        m = re.match(r"/betaald\s+#?(\d+)(?:\s+(cash|bank|basetao))?", low)
         if m:
             num, meth = int(m.group(1)), m.group(2)
             fields = {"payment_status": "betaald"}
@@ -766,35 +874,54 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#8aa39c;font-size:13px;margin-bottom
 .k{color:#8aa39c;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
 .v{font-size:26px;font-weight:700;margin-top:6px}
 .bar{height:14px;border-radius:7px;overflow:hidden;display:flex;margin-top:10px;background:#0c1210}
-.bar span{height:100%}.cash{background:#4caf7d}.wallet{background:#3d7dd8}
+.bar span{height:100%}.cash{background:#4caf7d}.bank{background:#3d7dd8}.wallet{background:#8a6fd1}
 .gap-ok{color:#4caf7d}.gap-bad{color:#e0a13d}
+.v.ok{color:#4caf7d}.v.bad{color:#e0a13d}.v.lime{color:#d7ff3f}
+h2{font-size:16px;margin:30px 0 0}
+.legend{display:flex;gap:14px;margin-top:10px;font-size:12px;color:#c8d6d1;flex-wrap:wrap}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+tr.tot td{font-weight:700;border-top:2px solid #2b463c}
+.ok{color:#4caf7d}.bad{color:#e0a13d}
 table{width:100%;max-width:980px;border-collapse:collapse;margin-top:22px;font-size:13px}
 td,th{padding:7px 9px;border-bottom:1px solid #1e2f28;text-align:left}
 th{color:#8aa39c;font-weight:600}form{margin-top:26px;max-width:980px;background:#182522;
 border:1px solid #24382f;border-radius:12px;padding:16px;display:grid;
 grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 input,select{background:#0c1210;border:1px solid #2b463c;color:#e8efec;border-radius:8px;padding:8px;width:100%}
-button{background:#4caf7d;border:0;border-radius:8px;padding:10px;font-weight:700;cursor:pointer}
+button{background:#d7ff3f;border:0;color:#10130f;border-radius:8px;padding:10px;font-weight:700;cursor:pointer}
 .note{color:#8aa39c;font-size:12px;margin-top:18px;max-width:980px}
 </style></head><body>
-<h1>YZ SHOP — admin · cash vs basetao</h1>
-<div class="sub">live · verversen elke 60s · stuur stemberichten naar je Telegram bot</div>
+<h1>YZ SHOP — cash &amp; bank</h1>
+<div class="sub">live · verversen elke 60s · regel: alleen inkoop+verzending storten → alle winst blijft cash</div>
 <div class="grid">
-<div class="card"><div class="k">Cash</div><div class="v">€__CASH__</div>
-<div class="bar"><span class="cash" style="width:__CASH_PCT__%"></span><span class="wallet" style="width:__WALLET_PCT__%"></span></div>
-<div class="k" style="margin-top:6px">__CASH_PCT__% van inkomsten</div></div>
+<div class="card"><div class="k">Cash ontvangen</div><div class="v ok">€__CASH__</div>
+<div class="k" style="margin-top:6px">__CASH_PCT__% van omzet</div></div>
+<div class="card"><div class="k">Bank ontvangen (tikkie/ideal)</div><div class="v">€__BANK__</div>
+<div class="k" style="margin-top:6px">__BANK_PCT__% van omzet</div></div>
 <div class="card"><div class="k">Basetao-inkomsten</div><div class="v">€__WALLET__</div>
-<div class="k" style="margin-top:6px">__WALLET_PCT__% van inkomsten</div></div>
-<div class="card"><div class="k">Winstmarge</div><div class="v">__MARGIN__%</div>
-<div class="k" style="margin-top:6px">€__PROFIT__ winst op €__INCOME__</div></div>
-<div class="card"><div class="k">Cash% vs marge%</div><div class="v __GAPCLS__">__GAP__ pp</div>
-<div class="k" style="margin-top:6px">doel: ~0 (cash aandeel volgt winst)</div></div>
+<div class="k" style="margin-top:6px">__WALLET_PCT__% van omzet</div></div>
+<div class="card"><div class="k">Omzet</div><div class="v lime">€__INCOME__</div>
+<div class="k" style="margin-top:6px">winst €__PROFIT__ · marge __MARGIN__%</div></div>
+<div class="card"><div class="k">Kosten (inkoop + verzending)</div><div class="v">€__COST__</div>
+<div class="k" style="margin-top:6px">gebetaald uit basetao-wallet</div></div>
 <div class="card"><div class="k">Open orders</div><div class="v">__OPENORDERS__</div>
 <div class="k" style="margin-top:6px">te innen: €__TEINNEN__</div></div>
+</div>
+<div class="grid" style="margin-top:14px">
+<div class="card wide"><div class="k">Cash → bank ratio</div>
+<div class="bar" style="height:20px"><span class="cash" style="width:__CASH_PCT__%"></span><span class="bank" style="width:__BANK_PCT__%"></span><span class="wallet" style="width:__WALLET_PCT__%"></span></div>
+<div class="legend"><span><span class="dot" style="background:#4caf7d"></span>cash __CASH_PCT__%</span><span><span class="dot" style="background:#3d7dd8"></span>bank __BANK_PCT__%</span><span><span class="dot" style="background:#8a6fd1"></span>basetao __WALLET_PCT__%</span><span>doel: cash% ≥ marge __MARGIN__% · verschil __GAP__ pp __GAPCLS_TXT__</span></div></div>
+<div class="card wide"><div class="k">Stort-check — topups vs kosten</div>
+<div class="v __TOPUP_CLS__">__TOPUP_TXT__</div>
+<div class="k" style="margin-top:6px">€__TOPUP__ gestort via iDEAL vs €__COST__ product+verzending · __STORT_ADVIES__</div></div>
 <div class="card"><div class="k">Basetao saldo (live)</div><div class="v">¥__BTBAL__</div>
 <div class="k" style="margin-top:6px">__BTCNT__</div></div>
 </div>
-<h1 style="font-size:17px;margin-top:30px">📋 Order- &amp; betaalstatus per order</h1>
+<h2>📅 Per maand — stort-check</h2>
+<table><tr><th>Maand</th><th>Omzet</th><th>Cash</th><th>Bank</th><th>Topups</th><th>Kosten</th><th>Topup − kosten</th></tr>
+__MROWS__
+</table>
+<h2>📋 Orders &amp; betalingen</h2>
 <table><tr><th>#</th><th>Klant</th><th>Items</th><th>€</th><th>Orderstatus</th><th>Betaalstatus</th><th>Basetao</th><th>Laatst</th><th></th></tr>
 __OROWS__
 </table>
@@ -814,17 +941,25 @@ __ROWS__
 </table>
 <form onsubmit="add(event)">
 <input id="f_amount" type="number" step="0.01" placeholder="bedrag €">
-<select id="f_type"><option value="income">inkomsten</option><option value="cost">kosten</option></select>
-<select id="f_method"><option value="cash">cash</option><option value="basetao">basetao</option></select>
+<select id="f_type"><option value="income">inkomsten</option><option value="cost">kosten</option><option value="topup">topup (storting)</option></select>
+<select id="f_method"><option value="cash">cash</option><option value="bank">bank/tikkie</option><option value="basetao">basetao</option></select>
 <input id="f_customer" placeholder="klant">
 <input id="f_note" placeholder="notitie">
 <button>Toevoegen</button></form>
+<form onsubmit="addNote(event)">
+<input id="f_note2" placeholder="notitie / memo (bv. transcript of afspraak)">
+<button>Notitie opslaan</button></form>
 <script>const K=new URLSearchParams(location.search).get('key')||(document.cookie.split('; ').find(r=>r.startsWith('key='))||'').slice(4)||'';
 if(K)document.cookie='key='+K+';path=/;max-age=31536000';
 async function add(e){e.preventDefault();const g=i=>document.getElementById(i).value;
+const t=g('f_type');const b={type:t,amount_eur:parseFloat(g('f_amount')),
+customer:g('f_customer')||null,note:g('f_note')||null};
+b.method=(t==='topup')?'ideal':g('f_method');
 const r=await fetch('/api/entry',{method:'POST',headers:{'Content-Type':'application/json','X-Access-Code':K},
-body:JSON.stringify({type:g('f_type'),amount_eur:parseFloat(g('f_amount')),
-method:g('f_method'),customer:g('f_customer')||null,note:g('f_note')||null})});
+body:JSON.stringify(b)});
+r.ok?location.reload():alert('mislukt');}
+async function addNote(e){e.preventDefault();const n=document.getElementById('f_note2').value.trim();
+if(!n)return;const r=await fetch('/api/note',{method:'POST',headers:{'Content-Type':'application/json','X-Access-Code':K},body:JSON.stringify({note:n})});
 r.ok?location.reload():alert('mislukt');}
 async function postOrder(b){const r=await fetch('/api/order',{method:'POST',
 headers:{'Content-Type':'application/json','X-Access-Code':K},body:JSON.stringify(b)});
@@ -839,7 +974,7 @@ postOrder(b);}
 async function delOrder(n){if(!confirm('Order #'+n+' verwijderen?'))return;
 const r=await fetch('/api/order/'+n,{method:'DELETE',headers:{'X-Access-Code':K}});
 r.ok?location.reload():alert('mislukt');}</script>
-<div class="note">Kosten tot nu toe: €__COST__ · seed-data uit Rep_Database.xlsx (Codex-historie).</div>
+<div class="note">topup = iDEAL-storting naar je basetao-wallet (geen omzet) · bank = tikkie/overboeking ontvangen · checkout-links worden automatisch als topup geboekt · stemnotities worden bewaard in de HF-dataset (map audio/).</div>
 </body></html>"""
 
 def render_dashboard():
@@ -852,6 +987,7 @@ def render_dashboard():
     with _ledlock:
         d = ledger_load()
         s = compute_stats(d)
+        maanden = monthly_breakdown(d)
         rows = []
         for e in reversed(d["entries"][-25:]):
             rows.append(
@@ -875,24 +1011,58 @@ def render_dashboard():
                     o.get("payment_status", ""),
                     (" (" + o["payment_method"] + ")") if o.get("payment_method") not in (None, "onbekend") else "",
                     bt, o.get("updated", ""), o.get("num", "")))
-    os_opts = "".join(f'<option value="{s}">{s}</option>' for s in ORDER_STATUSES)
-    ps_opts = "".join(f'<option value="{s}">{s}</option>' for s in PAYMENT_STATUSES)
-    gap_cls = "gap-ok" if abs(s["gap_pct"]) < 5 else "gap-bad"
+    os_opts = "".join(f'<option value="{x}">{x}</option>' for x in ORDER_STATUSES)
+    ps_opts = "".join(f'<option value="{x}">{x}</option>' for x in PAYMENT_STATUSES)
+    gap_txt = "✅" if abs(s["gap_pct"]) < 5 else "⚠️"
+    if s["topup_vs_cost"] >= 0:
+        topup_txt = f"✅ gedekt (+€{s['topup_vs_cost']:g})"
+        topup_cls = "ok"
+        advies = "wallet heeft voorraad — niks bijstorten nodig"
+    else:
+        topup_txt = f"⚠️ te kort (−€{abs(s['topup_vs_cost']):g})"
+        topup_cls = "bad"
+        advies = f"stort nog €{abs(s['topup_vs_cost']):g}, dan blijft al je cash winst"
+    mrows = []
+    if maanden:
+        t_om = t_c = t_b = t_t = t_k = 0.0
+        for r in maanden:
+            dcls = "ok" if r["delta"] >= 0 else "bad"
+            ds = f"+€{r['delta']:g}" if r["delta"] >= 0 else f"−€{abs(r['delta']):g}"
+            mrows.append(f"<tr><td>{r['maand']}</td><td>€{r['omzet']:g}</td><td>€{r['cash']:g}</td>"
+                         f"<td>€{r['bank']:g}</td><td>€{r['topup']:g}</td><td>€{r['cost']:g}</td>"
+                         f"<td class='{dcls}'>{ds}</td></tr>")
+            t_om += r["omzet"]
+            t_c += r["cash"]
+            t_b += r["bank"]
+            t_t += r["topup"]
+            t_k += r["cost"]
+        t_delta = round(t_t - t_k, 2)
+        tds = f"+€{t_delta:g}" if t_delta >= 0 else f"−€{abs(t_delta):g}"
+        mrows.append(f"<tr class='tot'><td>totaal</td><td>€{round(t_om, 2):g}</td>"
+                     f"<td>€{round(t_c, 2):g}</td><td>€{round(t_b, 2):g}</td>"
+                     f"<td>€{round(t_t, 2):g}</td><td>€{round(t_k, 2):g}</td><td>{tds}</td></tr>")
     return (DASH
             .replace("__CASH__", f"{s['inc_cash']:g}")
+            .replace("__BANK__", f"{s['inc_bank']:g}")
             .replace("__WALLET__", f"{s['inc_wallet']:g}")
             .replace("__CASH_PCT__", str(s["cash_pct"]))
+            .replace("__BANK_PCT__", str(s["bank_pct"]))
             .replace("__WALLET_PCT__", str(s["wallet_pct"]))
-            .replace("__MARGIN__", str(s["margin_pct"]))
-            .replace("__PROFIT__", f"{s['profit']:g}")
             .replace("__INCOME__", f"{s['income']:g}")
+            .replace("__PROFIT__", f"{s['profit']:g}")
+            .replace("__MARGIN__", str(s["margin_pct"]))
             .replace("__COST__", f"{s['cost']:g}")
             .replace("__GAP__", str(s["gap_pct"]))
-            .replace("__GAPCLS__", gap_cls)
+            .replace("__GAPCLS_TXT__", gap_txt)
+            .replace("__TOPUP__", f"{s['topup_total']:g}")
+            .replace("__TOPUP_TXT__", topup_txt)
+            .replace("__TOPUP_CLS__", topup_cls)
+            .replace("__STORT_ADVIES__", advies)
             .replace("__OPENORDERS__", str(s["open_orders"]))
             .replace("__TEINNEN__", f"{s['te_innen']:g}")
             .replace("__BTBAL__", str(btbal))
             .replace("__BTCNT__", btc)
+            .replace("__MROWS__", "\n".join(mrows) or '<tr><td colspan="7">— nog geen bedragen —</td></tr>')
             .replace("__OROWS__", "\n".join(orows) or '<tr><td colspan="9">— nog geen orders —</td></tr>')
             .replace("__OSOPT__", os_opts)
             .replace("__PSOPT__", ps_opts)
@@ -1035,26 +1205,46 @@ def stats():
     with _ledlock:
         d = ledger_load()
     return JSONResponse({"stats": compute_stats(d),
+                         "maanden": monthly_breakdown(d),
                          "recent": list(reversed(d["entries"][-25:]))})
 
 @app.post("/api/entry")
 async def api_entry(req: Request):
     b = await req.json()
     t, amt = b.get("type"), b.get("amount_eur")
-    if t not in ("income", "cost") or not amt:
+    if t not in ("income", "cost", "topup") or not amt:
         return JSONResponse({"ok": False, "error": "type of bedrag ongeldig"}, status_code=400)
+    standaard = {"income": "cash", "cost": "basetao", "topup": "ideal"}[t]
     with _ledlock:
         d = ledger_load()
         d["entries"].append({
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "type": t,
             "amount_eur": float(amt),
-            "method": b.get("method") or ("cash" if t == "income" else "basetao"),
+            "method": b.get("method") or standaard,
             "customer": b.get("customer"), "items": None,
             "note": b.get("note") or "website", "source": "website"})
         ledger_save(d)
         s = compute_stats(d)
         hf_sync_up()
     return JSONResponse({"ok": True, "stats": s})
+
+@app.post("/api/note")
+async def api_note(req: Request):
+    """Vrije notitie in het kasboek (bijv. herstelde transcripts, memo's)."""
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "ongeldige json"}, status_code=400)
+    note = (b.get("note") or "").strip()
+    if not note:
+        return JSONResponse({"ok": False, "error": "geen notitie"}, status_code=400)
+    with _ledlock:
+        d = ledger_load()
+        d["entries"].append({"ts": _now(), "type": "note", "note": note[:2000],
+                             "source": b.get("source") or "website"})
+        ledger_save(d)
+        hf_sync_up()
+    return JSONResponse({"ok": True})
 
 @app.get("/orders")
 def orders():
@@ -1389,8 +1579,11 @@ async def wa_incoming(req: Request):
         path = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"wa_{int(time.time() * 1000)}.ogg")
         with open(path, "wb") as f:
             f.write(base64.b64decode(b64))
+        audio_bytes = b""
         try:
             text = await asyncio.to_thread(transcribe, path)
+            with open(path, "rb") as f:
+                audio_bytes = f.read()
         except Exception as e:  # noqa: BLE001
             print("wa asr error:", e)
             return JSONResponse({"reply": "Stemmetje kon ik niet verwerken 🙈 typ even wat je zoekt."})
@@ -1401,6 +1594,7 @@ async def wa_incoming(req: Request):
                 pass
         if not text:
             return JSONResponse({"reply": "❓ Geen spraak herkend, typ even."})
+        voice_note_opslaan(text, "whatsapp", chat_key="wa:" + key, audio_bytes=audio_bytes)
     elif mtype == "image":
         if not text:
             return JSONResponse({"reply": WA_IMG_REPLY})
@@ -1711,6 +1905,14 @@ def checkout(amount: str = ""):
     except Exception as e:  # noqa: BLE001
         print("checkout error:", e)
         return _checkout_error(502, "De betaalpartner accepteert de betaling nu even niet.")
+    # topup meteen boeken: zo is "gestort via links" altijd vergelijkbaar met de kosten
+    with _ledlock:
+        d = ledger_load()
+        d["entries"].append({
+            "ts": _now(), "type": "topup", "amount_eur": amt, "method": "ideal",
+            "note": "checkout-link aangemaakt (iDEAL → basetao wallet)", "source": "checkout"})
+        ledger_save(d)
+    threading.Thread(target=hf_sync_up, daemon=True).start()
     return RedirectResponse(pay_url, status_code=302)
 
 _IMMUTABLE_EXTS = {".webp", ".png", ".jpg", ".jpeg", ".svg", ".ico",
