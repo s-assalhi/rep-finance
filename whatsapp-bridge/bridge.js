@@ -135,6 +135,18 @@ async function handleMessage(sock, m, seen, mySends) {
 
   try { await sock.readMessages([m.key]); } catch (_) { /* geen probleem */ }
 
+  // Snelle bevestiging naar de klant zodra het echte antwoord even duurt
+  // (zoeken/prijzen checken); korte vragen zijn al beantwoord vóór de timer.
+  let ackTimer = null;
+  if (!fromMe) {
+    ackTimer = setTimeout(async () => {
+      try {
+        const s = await sock.sendMessage(jid, { text: 'Ik ga even voor je kijken 👍' });
+        if (s && s.key && s.key.id) mySends.add(s.key.id);
+      } catch (_) { /* geen ramp */ }
+    }, 4500);
+  }
+
   const resp = await post('/whatsapp/incoming', {
     chat: jid,
     num,
@@ -144,6 +156,7 @@ async function handleMessage(sock, m, seen, mySends) {
     text: (parsed.text || '').trim(),
     audio_b64: audioB64,
   }, 150000);
+  if (ackTimer) clearTimeout(ackTimer);
 
   const reply = resp && resp.reply;
   const toMe = resp && resp.to_me;
