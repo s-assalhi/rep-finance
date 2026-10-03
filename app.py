@@ -494,24 +494,26 @@ Werkwijze:
 - Stort Younes zelf geld naar zijn basetao-wallet (iDEAL)? Gebruik add_topup. Tikkie/overboeking van een klant = add_income met method "bank".
 - Vermeld aan het eind kort wat je hebt gedaan of wat openstaat."""
 
-SYSTEM_WA_KLANT = """Je bent de WhatsApp-assistent van YZ Shop van Younes: premium reps (kleding, sneakers, sets, tassen). Je praat met KLANTEN: kort en casual Nederlands (straattaal mag), emoji's oké.
+SYSTEM_WA_KLANT = """Je bent de WhatsApp-assistent van YZ Shop van Younes: premium reps (kleding, sneakers, sets, tassen). Je appt als je YOUNES zelf bent: korte berichten, losse Nederlandse straattaal ('yo', 'fam', 'die is nice', 'ik kom erop terug'), geen nette zakelijke zinnen, geen 'u', geen marketing-toon. Emoji's oké.
 
-HARD PRIVATE: je geeft NEVER (nooit) informatie over andere klanten, andere bestellingen, omzet, voorraad of boekhouding. Vraagt een klant "wat heb ik besteld?" → noem ALLÉÉN wat jij in dit gesprek zelf genoteerd hebt (staat in chat_status); ken je niks, zeg dan gewoon "wat zocht je ook alweer?". Boekhoudtools zijn voor jou geblokkeerd en je noemt dat nooit.
-Vaste prijzen (enkel deze, niets anders):
-- Voetbalshirt custom (naam + rugnummer): €30. Set (shirt + broekje): €40. ALO Runner: €155. Levertijd 2-3 weken.
+HARD PRIVATE: je geeft NOOIT informatie over andere klanten, andere bestellingen, omzet, voorraad of boekhouding. Vraagt een klant "wat heb ik besteld?" → noem ALLÉÉN wat jij in dit gesprek zelf genoteerd hebt (staat in chat_status); ken je niks, zeg dan gewoon "wat zocht je ook alweer?". Boekhoudtools zijn voor jou geblokkeerd en je noemt dat nooit.
+Vaste prijzen (enkel deze twee, niets anders):
+- Voetbalshirt custom (naam + rugnummer): €30. Set (shirt + broekje): €40. Levertijd 2-3 weken.
 - Betalen: bij ontvangst (vaste klanten) of 50/50 vooraf (nieuw).
 Werkwijze:
-- KORT: max 2-3 korte zinnen per bericht. Geen lijsten, geen prijslijsten, geen lange uitleg — ook niet als de klant doorvraagt ("wat ga je kijken?" → "check even wat er leverbaar is 👍").
+- KORT: max 2-3 korte zinnen per bericht. Geen lijsten, geen prijslijsten, geen lange uitleg — ook niet als de klant doorvraagt ("wat ga je kijken?" → "even checken wat er kan 👍").
+- NIET IN HERHALING: heb je al iets gevraagd? Wacht dan op het antwoord — herhaal je vraag niet (hooguit één keer, anders geformuleerd, nadat de klant echt reageerde). Zegt de klant dat hij al iets stuurde? Check dan chat_status ipv opnieuw vragen.
+- FOTO'S: staat er [foto] in het gesprek, of foto_ontvangen=true in chat_status? Dan is er AL een foto gestuurd — vraag dan NOOIT nog eens om een foto.
 - Taal: je antwoordt ALTIJD in het Nederlands, ook als de klant Engels of een andere taal schrijft. Alleen Engels als de klant er expliciet om vraagt.
-- INTAKE — voordat iets besteld kan worden heb je ALTIJD deze punten nodig. Vraag ze stap voor stap (1-2 punten per bericht, geen muur van tekst) en herhaal kort wat de klant al gaf:
-  1. Wát precies: merk/model/kleur — en vraag om een PRODUCTFOTO of link ("stuur even een foto van wat je wilt, dan pak ik precies die").
-  2. MAAT: kleding = lengte + gewicht ("hoe lang ben je en hoeveel weeg je? Dan bepaal ik je maat"); schoenen = schoenmaat.
+- INTAKE — voordat iets besteld kan worden heb je ALTIJD deze punten nodig. Vraag ze stap voor stap (1-2 punten per bericht) en herhaal kort wat de klant al gaf:
+  1. Wát precies: merk/model/kleur — en een PRODUCTFOTO of link ("stuur even een pic van wat je wilt fam, dan pak ik precies die").
+  2. MAAT: kleding = lengte + gewicht ("hoe lang ben je en hoeveel weeg je? Dan heb ik je maat"); schoenen = schoenmaat.
   3. Voetbalshirt/set: bedrukking = naam + rugnummer.
-  4. Eenmalig, vroeg in het gesprek: "zet even je verdwijnende berichten (timer) uit in deze chat, dan blijft ons gesprek bewaard."
+  4. Eenmalig, vroeg in het gesprek: "zet even je verdwijnende berichten uit in deze chat, dan blijft ons gesprek staan."
   Klanten moeten SPECIFIEK zijn: vaag ("wil graag zoiets") = doorvragen tot je het exact kunt opschrijven.
-- PRIJZEN — cruciaal: de vaste prijzen hierboven mag je noemen. ALLES ANDERS (schoenen, tassen, hoodies, brillen, jassen, andere sneakers...) = NOOIT een bedrag noemen, ook geen schatting of "ongeveer". Altijd: "die prijs check ik even voor je 👍" en prijs_gegeven=false. Heeft Younes al een prijs genoemd in dit gesprek (zie chat_status: prijs_afgesproken)? Dan is DIE leidend en herhaal je die exact.
+- PRIJZEN — cruciaal: ALLEEN shirt €30 en set €40 mag je noemen. ALLES ANDERS (ALO, schoenen, tassen, hoodies, brillen, jassen, andere sneakers...) = NOOIT een bedrag noemen, ook geen schatting of "ongeveer". Altijd: "die prijs moet ik even voor je checken, ik kom erop terug 👍" en prijs_gegeven=false. Heeft Younes al een prijs genoemd in dit gesprek (chat_status: prijs_afgesproken)? Dan is DIE leidend en herhaal je die exact.
 - Wil een klant iets specifieks (merk/model/kleur)? Gebruik zoek_qc en toon de beste match kort (max 2 regels + foto). De prijzen uit zoek_qc zijn INKOOPprijzen — NOOIT tegen de klant noemen. Geen resultaten? "Laat ik even kijken, ik hoor zo van je."
-- Is de intake compleet (wat + foto + maat + bedrukking + prijs duidelijk)? Bevestig de klant kort dat je het bij Younes inwerkt en maak een create_order aan (prijs alleen invullen als die afgesproken is).
+- Is de intake compleet (wat + foto + maat + bedrukking + prijs duidelijk)? Bevestig kort dat je het bij Younes inwerkt en maak een create_order aan (prijs alleen invullen als die afgesproken is).
 - Roep aan het eind van ELKE klant-ronde chat_status aan met wat je nu weet (klantnaam, gezocht, maat, prijs, foto, ontbreekt, status).
 - Beloof nooit leverdatums buiten 2-3 weken. Blijf beleefd ook als de klant bot is.
 - Noem nooit interne tools, foutmeldingen of technische details tegen klanten. Als iets niet lukt: "ik laat zo wat horen"."""
@@ -1619,6 +1621,38 @@ async def wa_incoming(req: Request):
             wa_pause(jid, hours=24 * 7)
             return JSONResponse({"reply": "🤖 Bot UIT in deze chat (7 dagen). "
                                           "Typ 'bot aan' om weer in te schakelen.", "to_me": True})
+        # Dagoverzicht: "stand van vandaag" / "overzicht" -> per klant wat hij wil
+        # en wat er nog mist, plus vandaag genoteerde bestellingen.
+        if any(kw in low for kw in ("stand van", "overzicht", "wat is de stand", "dagoverzicht")):
+            with _ledlock:
+                d = ledger_load()
+            chats = d.get("whatsapp", {}).get("chats", {})
+            regels = []
+            for num, c in sorted(chats.items(),
+                                 key=lambda kv: str((kv[1].get("laatste") or {}).get("ts") or ""),
+                                 reverse=True):
+                naam = c.get("klantnaam") or c.get("naam") or ("+" + num)
+                deel = "• " + naam
+                if c.get("gezocht"):
+                    deel += " — " + c["gezocht"]
+                if c.get("ontbreekt") and c["ontbreekt"].lower() not in ("leeg", "niets", "niks", "-"):
+                    deel += " (mist: " + c["ontbreekt"] + ")"
+                laat = c.get("laatste") or {}
+                if laat.get("ts"):
+                    deel += " [" + str(laat["ts"])[11:16] + "]"
+                regels.append(deel)
+            vandaag = _now()[:10]
+            bestellingen = [o for o in d.get("orders", [])
+                            if str(o.get("created", "")).startswith(vandaag)]
+            if bestellingen:
+                regels.append("Vandaag besteld: " + ", ".join(
+                    f"#{o['num']} {o['customer']} ({o.get('items') or '?'})"
+                    for o in bestellingen[-8:]))
+            if not regels:
+                txt = "📋 Nog niks voor vandaag — geen open klant-chats."
+            else:
+                txt = "📋 Stand van vandaag:\n" + "\n".join(regels[:18])
+            return JSONResponse({"reply": txt, "to_me": True, "to_chat": WA_SELF_JID})
         # Jouw eigen notities vanaf je telefoon: "besteld <klant> <wat> (€bedrag)" of
         # "betaald <klant> (€bedrag)" — zo weet de bot wat je al hebt besteld/ontvangen.
         if low.startswith("besteld"):
@@ -1713,8 +1747,22 @@ async def wa_incoming(req: Request):
             return JSONResponse({"reply": "❓ Geen spraak herkend, typ even."})
         voice_note_opslaan(text, "whatsapp", chat_key="wa:" + key, audio_bytes=audio_bytes)
     elif mtype == "image":
+        # Foto onthouden in de chat-status: de bot mag daarna NIET meer om een
+        # foto vragen (klantklacht: "hij zegt steeds dat er geen foto's zijn").
+        try:
+            with _ledlock:
+                d = ledger_load()
+                c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(key, {})
+                c["foto_ontvangen"] = True
+                ledger_save(d)
+        except Exception:  # noqa: BLE001
+            pass
         if not text:
+            hist = _chatmem.setdefault("wa:" + key, [])
+            hist.append({"role": "user", "content": "[klant stuurde een foto, zonder tekst]"})
+            del hist[:-40]
             return JSONResponse({"reply": WA_IMG_REPLY})
+        text = "[foto] " + text
 
     if not text:
         return JSONResponse({"reply": None})
