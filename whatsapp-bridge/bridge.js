@@ -263,7 +263,8 @@ async function start(backoffMs = 3000) {
         error: String((lastDisconnect && lastDisconnect.error) || ''),
       });
       if (loggedOut) {
-        log('sessie ongeldig — sessie wissen, nieuwe QR nodig');
+        log('sessie ongeldig — oude sessie ook uit HF-backup laten wissen, dan map leeg');
+        await post('/whatsapp/logout', {});
         fs.rmSync(SESSION_DIR, { recursive: true, force: true });
       }
       setTimeout(() => start(nextBackoff).catch((e2) => log('herstart mislukt:', e2.message)), nextBackoff);
