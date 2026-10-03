@@ -223,6 +223,7 @@ async function start(backoffMs = 3000) {
   let nextBackoff = backoffMs;
   let pairRequested = false;
   let openedEver = false;
+  let openedAt = 0;
 
   // hang-guard: als 'verbinden' te lang duurt zonder QR of open, socket opnieuw
   const hangGuard = setTimeout(() => {
@@ -263,8 +264,8 @@ async function start(backoffMs = 3000) {
       log('nieuwe QR-code gepost naar backend — scan met je telefoon of gebruik de koppelcode');
     }
     if (connection === 'open') {
+      openedAt = Date.now();
       log('WhatsApp VERBONDEN ✓ (telefoon blijft gewoon werken)');
-      nextBackoff = 3000;
       await post('/whatsapp/status', { status: 'connected' });
     }
     if (connection === 'connecting') {
@@ -283,8 +284,18 @@ async function start(backoffMs = 3000) {
         await post('/whatsapp/logout', {});
         fs.rmSync(SESSION_DIR, { recursive: true, force: true });
       }
+      // Stabiele run van >5 min -> meteen opnieuw verbinden. Korte run of 440
+      // (conflict: ergens draait nog een tweede bridge met deze sessie) -> LANG
+      // wachten, anders vechten twee bruggen oneindig om dezelfde verbinding.
+      if (Date.now() - openedAt > 300000) {
+        nextBackoff = 3000;
+      } else if (code === 440) {
+        nextBackoff = 90000;
+      } else {
+        nextBackoff = Math.min(Math.max(nextBackoff, 15000) * 2, 90000);
+      }
+      log('opnieuw verbinden over', Math.round(nextBackoff / 1000), 's');
       setTimeout(() => start(nextBackoff).catch((e2) => log('herstart mislukt:', e2.message)), nextBackoff);
-      nextBackoff = Math.min(nextBackoff * 2, 60000);
     }
   });
 
