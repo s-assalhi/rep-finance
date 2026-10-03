@@ -49,7 +49,9 @@ MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "").strip()  # Voxtral ASR (
 MISTRAL_ASR_MODEL = os.environ.get("MISTRAL_ASR_MODEL", "voxtral-small-latest")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()  # gratis ASR via AI Studio
 WHATSAPP_ENABLED = os.environ.get("WHATSAPP_ENABLED", "0") == "1"  # Baileys-bridge start via start.sh
-WA_TAKEOVER_HOURS = float(os.environ.get("WA_TAKEOVER_HOURS", "0"))  # 0 = auto-pauze UIT: bot blijft actief als Younes zelf typt
+# Auto-pauze BOTSHARD uit (wens Younes, 03-10): de Render env-var staat (onveranderbaar
+# via de API) op 12 en overrulet de code-default, dus hier bewust NIET meer uitlezen.
+WA_TAKEOVER_HOURS = 0.0
 WA_IMG_REPLY = os.environ.get(
     "WA_IMG_REPLY",
     "Ontvangen 👍 Zet er even tekst bij (wat zoek je, kleur/maat)? Dan pak ik het direct op.").strip()
