@@ -42,6 +42,13 @@ const WA_PAIR_PHONE = (process.env.WA_PAIR_PHONE || '31684805378').replace(/[^0-
 
 const logger = pino({ level: 'silent' });
 
+// Globaal (overleeft herverbindingen): anders verwerkt een herstartende bridge
+// nageleverde berichten opnieuw = dubbele antwoorden.
+const seen = new Set();
+const mySends = new Set();
+const MSG_MAX_AGE_MS = 120000;    // klantberichten ouder dan 2 min -> niet beantwoorden
+const MSG_MAX_AGE_ME_MS = 600000; // eigen notities mogen tot 10 min later verwerkt worden
+
 function log(...args) {
   console.log(new Date().toISOString(), ...args);
 }
@@ -98,7 +105,11 @@ function chunks(text, max = 3500) {
 async function handleMessage(sock, m, seen, mySends) {
   if (!m.key || seen.has(m.key.id)) return;
   seen.add(m.key.id);
-  if (seen.size > 800) seen.clear();
+  if (seen.size > 2000) seen.clear();
+
+  // Te oud (nageleverd na verbindingstijd) -> negeren, geen antwoord op oude berichten
+  const mts = Number(m.messageTimestamp || 0) * 1000;
+  if (mts && Date.now() - mts > (m.key.fromMe ? MSG_MAX_AGE_ME_MS : MSG_MAX_AGE_MS)) return;
 
   const jid = m.key.remoteJid || '';
   if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@newsletter')) return;
@@ -151,8 +162,8 @@ async function handleMessage(sock, m, seen, mySends) {
 
   try { await sock.readMessages([m.key]); } catch (_) { /* geen probleem */ }
 
-  // Snelle bevestiging naar de klant zodra het echte antwoord even duurt
-  // (zoeken/prijzen checken); korte vragen zijn al beantwoord vóór de timer.
+  // Snelle bevestiging ALLÉÉN bij echt lange acties (zoeken): na 12s nog geen
+  // antwoord -> dan pas "even voor je kijken". Korte vragen nooit.
   let ackTimer = null;
   if (!fromMe) {
     ackTimer = setTimeout(async () => {
@@ -160,7 +171,7 @@ async function handleMessage(sock, m, seen, mySends) {
         const s = await sock.sendMessage(jid, { text: 'Ik ga even voor je kijken 👍' });
         if (s && s.key && s.key.id) mySends.add(s.key.id);
       } catch (_) { /* geen ramp */ }
-    }, 4500);
+    }, 12000);
   }
 
   const resp = await post('/whatsapp/incoming', {
@@ -234,8 +245,8 @@ async function start(backoffMs = 3000) {
     syncFullHistory: false,
   });
 
-  const seen = new Set();
-  const mySends = new Set(); // bericht-id's die DEZE bridge zelf verstuurde (echo's negeren)
+  // seen/mySends zijn module-globaal (bovenaan dit bestand) zodat ze een
+  // herverbinding overleven.
   let nextBackoff = backoffMs;
   let pairRequested = false;
   let openedEver = false;
