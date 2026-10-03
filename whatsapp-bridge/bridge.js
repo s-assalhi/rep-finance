@@ -107,10 +107,26 @@ async function handleMessage(sock, m, seen, mySends) {
   // (anders zou de bot zijn eigen antwoorden zien als "Younes reageerde zelf").
   if (m.key.fromMe && mySends.has(m.key.id)) return;
 
+  const num = jidNumber(jid);
+
+  // Onleesbaar bericht (CIPHERTEXT-stub): afzender versleutelde nog met een oude
+  // sessie (gebruikelijk na herkoppelen) -> laat Younes het via bericht-jezelf weten.
+  const stub = m.messageStubType;
+  if (!m.key.fromMe && (stub === 2 || stub === 'CIPHERTEXT')) {
+    log('onleesbaar bericht (oude versleuteling) van', num);
+    const respN = await post('/whatsapp/notify_unreadable', { chat: jid, num });
+    if (respN && respN.reply && respN.to_chat) {
+      try {
+        const sN = await sock.sendMessage(respN.to_chat, { text: respN.reply });
+        if (sN && sN.key && sN.key.id) mySends.add(sN.key.id);
+      } catch (_) { /* geen ramp */ }
+    }
+    return;
+  }
+
   const parsed = messageText(m);
   if (!parsed) return; // stickers, locaties, contacten e.d. -> geen actie
 
-  const num = jidNumber(jid);
   if (!m.key.fromMe) {
     if (WA_BLOCK.some((b) => num.startsWith(b))) return;
     if (WA_ALLOW.length && !WA_ALLOW.some((a) => num.startsWith(a))) return;
