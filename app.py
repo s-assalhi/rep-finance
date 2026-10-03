@@ -462,6 +462,21 @@ TOOLS = [
             "query": {"type": "string", "description": "zoekterm, bijv. 'nike dunk low panda'"},
             "count": {"type": "integer", "description": "aantal items (1-5), standaard 3"}},
             "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "chat_status",
+        "description": "Werk het klantoverzicht bij voor DEZE chat — de 'stand van zaken' die Younes "
+                       "leest om niks te vergeten. Roep dit aan aan het eind van elke klant-ronde "
+                       "met wat je op dit moment weet (of wat is veranderd).",
+        "parameters": {"type": "object", "properties": {
+            "klantnaam": {"type": "string", "description": "voornaam zoals de klant die gaf"},
+            "gezocht": {"type": "string", "description": "wat de klant wil: merk/model/kleur/bedrukking"},
+            "maat": {"type": "string", "description": "bekende maat, of 'lengte+gewicht: 178cm/70kg', of onbekend"},
+            "prijs_afgesproken": {"type": "number", "description": "afgesproken prijs in euro; weglaten als er nog geen prijs is"},
+            "prijs_gegeven": {"type": "boolean", "description": "true als de klant al een concrete prijs heeft gekregen (van Younes of een vaste prijs)"},
+            "foto_ontvangen": {"type": "boolean", "description": "true als er een productfoto of link is"},
+            "ontbreekt": {"type": "string", "description": "wat je nog nodig hebt, bijv. 'foto, maat (lengte+gewicht)' of 'leeg'"},
+            "status": {"type": "string", "description": "kort: nieuw / wacht_op_info / prijs_gegeven / klaar_voor_bestelling / besteld / afgerond"}},
+            "required": []}}},
 ]
 
 SYSTEM_AGENT = """Je bent Rep Agent, de boekhoudmaat van Younes: hij verkoopt reps (kleding, sneakers, sets) via Snapchat, WhatsApp en Telegram en inkoopt via basetao. Je praat in zijn taal: kort, casual, Nederlands, max ~4 regels, emoji's zijn oké.
@@ -480,12 +495,19 @@ SYSTEM_WA_KLANT = """Je bent de WhatsApp-assistent van YZ Shop van Younes: premi
 
 Vaste feiten:
 - Voetbalshirt custom (naam + rugnummer): €30. Set (shirt + broekje): €40. ALO Runner: €155. Levertijd 2-3 weken.
-- Betalen: bij ontvangst (vaste klanten) of 50/50 vooraf (nieuw). Maten: bij twijfel vraag lengte + gewicht.
+- Betalen: bij ontvangst (vaste klanten) of 50/50 vooraf (nieuw).
 Werkwijze:
 - Taal: je antwoordt ALTIJD in het Nederlands, ook als de klant Engels of een andere taal schrijft. Alleen Engels als de klant er expliciet om vraagt.
-- Vraag naar prijs van iets dat je niet zeker weet: geef de vaste prijzen hierboven; anders zeg je "ik check de prijs voor je" en noteer je de aanvraag als order (create_order, status interesse, prijs nog 0).
-- Wil een klant iets specifieks (merk/model/kleur/maat)? Gebruik de zoek_qc tool en noem de beste match kort met prijs en de QC-fotolink. Geen resultaten? Zeg dat je het even laat weten.
-- Neem bestellingen op met create_order (klantnaam, items, prijs) en bevestig kort wat je hebt genoteerd.
+- INTAKE — voordat iets besteld kan worden heb je ALTIJD deze punten nodig. Vraag ze stap voor stap (1-2 punten per bericht, geen muur van tekst) en herhaal kort wat de klant al gaf:
+  1. Wát precies: merk/model/kleur — en vraag om een PRODUCTFOTO of link ("stuur even een foto van wat je wilt, dan pak ik precies die").
+  2. MAAT: kleding = lengte + gewicht ("hoe lang ben je en hoeveel weeg je? Dan bepaal ik je maat"); schoenen = schoenmaat.
+  3. Voetbalshirt/set: bedrukking = naam + rugnummer.
+  4. Eenmalig, vroeg in het gesprek: "zet even je verdwijnende berichten (timer) uit in deze chat, dan blijft ons gesprek bewaard."
+  Klanten moeten SPECIFIEK zijn: vaag ("wilde gerne zoiets") = doorvragen tot je het exact kunt opschrijven.
+- PRIJZEN — heel belangrijk: check of er al een prijs is afgesproken (staat in chat_status: prijs_afgesproken/prijs_gegeven, en in dit gesprek). Al afgesproken? Dan is DIE prijs leidend: herhaal die, nooit een ander bedrag. Nog geen prijs en ook geen vaste prijs uit de lijst hierboven? Zeg "die check ik even voor je" en laat prijs_gegeven op false staan — noem het bedrag pas als Younes het heeft gezegd. Vaste prijzen (shirt €30, set €40, ALO €155) mag je zelf noemen en zet je prijs_gegeven op true.
+- Wil een klant iets specifieks (merk/model/kleur)? Gebruik zoek_qc en noem de beste match kort met QC-foto. Geen resultaten? Zeg dat je het even laat weten.
+- Is de intake compleet (wat + foto + maat + bedrukking + prijs duidelijk)? Bevestig de klant dat je het bij Younes inwerkt en maak een create_order aan (prijs alleen invullen als die afgesproken is).
+- Roep aan het eind van ELKE klant-ronde chat_status aan met wat je nu weet (klantnaam, gezocht, maat, prijs, foto, ontbreekt, status) — Younes leest dat overzicht om niks te vergeten.
 - Verzin nooit prijzen. Beloof nooit leverdatums buiten 2-3 weken. Blijf beleefd ook als de klant bot is.
 - Noem nooit interne tools, foutmeldingen of technische details tegen klanten. Als iets niet lukt: "ik laat zo wat horen"."""
 
@@ -560,6 +582,27 @@ def run_tool(name, args_json, chat_key=None):
                 hf_sync_up()
             return (f"topup €{a.get('amount_eur')} geboekt | gestort €{s['topup_total']} vs "
                     f"kosten €{s['cost']} (verschil €{s['topup_vs_cost']})")
+        if name == "chat_status":
+            if not chat_key or not chat_key.startswith("wa:"):
+                return "chat_status werkt alleen in WhatsApp-chats"
+            with _ledlock:
+                d = ledger_load()
+                c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(chat_key[3:], {})
+                for f in ("klantnaam", "gezocht", "maat", "ontbreekt", "status"):
+                    if a.get(f) is not None:
+                        c[f] = str(a[f])[:300]
+                if a.get("prijs_afgesproken") is not None:
+                    try:
+                        c["prijs_afgesproken"] = float(a["prijs_afgesproken"])
+                    except (TypeError, ValueError):
+                        pass
+                for f in ("prijs_gegeven", "foto_ontvangen"):
+                    if a.get(f) is not None:
+                        c[f] = bool(a[f])
+                c["bijgewerkt"] = _now()
+                ledger_save(d)
+                hf_sync_up()
+            return "klantoverzicht bijgewerkt"
         if name == "create_order":
             with _ledlock:
                 d = ledger_load()
@@ -1542,6 +1585,19 @@ async def wa_incoming(req: Request):
     text = (b.get("text") or "").strip()
     mtype = b.get("type") or "text"
 
+    # Laatste bericht per chat vastleggen voor het stand-van-zaken-overzicht (/wa-chats)
+    try:
+        with _ledlock:
+            d = ledger_load()
+            c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(key, {})
+            if b.get("name"):
+                c.setdefault("naam", str(b["name"])[:80])
+            c["laatste"] = {"ts": _now(), "van": "jij" if b.get("from_me") else "klant",
+                            "tekst": (text[:200] or f"[{mtype}]")}
+            ledger_save(d)
+    except Exception:  # noqa: BLE001
+        pass
+
     if b.get("from_me"):
         low = text.lower()
         if low in ("/bot aan", "bot aan"):
@@ -1551,6 +1607,52 @@ async def wa_incoming(req: Request):
             wa_pause(jid, hours=24 * 7)
             return JSONResponse({"reply": "🤖 Bot UIT in deze chat (7 dagen). "
                                           "Typ 'bot aan' om weer in te schakelen.", "to_me": True})
+        # Jouw eigen notities vanaf je telefoon: "besteld <klant> <wat> (€bedrag)" of
+        # "betaald <klant> (€bedrag)" — zo weet de bot wat je al hebt besteld/ontvangen.
+        if low.startswith("besteld"):
+            rest = text[len("besteld"):].strip()
+            delen = rest.split()
+            if not delen:
+                return JSONResponse({"reply": "📝 Format: besteld <klant> <wat> (€bedrag)", "to_me": True})
+            naam = delen[0]
+            itemstxt = " ".join(delen[1:]) or "?"
+            m = re.search(r"(?:€|eur\s?)\s?(\d+(?:[.,]\d{1,2})?)", itemstxt, re.I)
+            prijs = float(m.group(1).replace(",", ".")) if m else 0
+            if m:
+                itemstxt = (itemstxt[:m.start()] + " " + itemstxt[m.end():]).strip() or "?"
+            out = str(run_tool("create_order", json.dumps(
+                {"customer": naam, "items": itemstxt, "price_eur": prijs})))
+            mm = re.search(r"#(\d+)", out)
+            if mm:
+                out = str(run_tool("update_order", json.dumps(
+                    {"num": int(mm.group(1)), "order_status": "besteld"}))) or out
+            return JSONResponse({"reply": "📝 " + out, "to_me": True})
+        if low.startswith("betaald"):
+            rest = text[len("betaald"):].strip()
+            naam = rest.split()[0] if rest.split() else ""
+            m = re.search(r"(?:€|eur\s?)\s?(\d+(?:[.,]\d{1,2})?)", rest, re.I)
+            with _ledlock:
+                d = ledger_load()
+                hit = None
+                for o in reversed(d.get("orders", [])):
+                    if naam and naam.lower() in str(o.get("customer", "")).lower() \
+                            and o.get("payment_status") != "betaald":
+                        hit = o
+                        break
+                if hit:
+                    hit["payment_status"] = "betaald"
+                    hit.setdefault("history", []).append({"ts": _now(), "event": "betaald (notitie in WhatsApp)"})
+                    d.setdefault("entries", []).append({
+                        "ts": _now(), "type": "income",
+                        "amount_eur": float(m.group(1).replace(",", ".")) if m else float(hit.get("price_eur") or 0),
+                        "method": "bank", "customer": hit.get("customer"),
+                        "note": "notitie in WhatsApp"})
+                    ledger_save(d)
+                    hf_sync_up()
+                    return JSONResponse({"reply": f"✅ Order #{hit['num']} ({hit['customer']}) op betaald gezet "
+                                                  f"en geld bijgeschreven.", "to_me": True})
+            return JSONResponse({"reply": f"❓ Geen open order gevonden voor '{naam}'. "
+                                          f"Check de klantnaam (zelfde spelling als in de order).", "to_me": True})
         if WA_TAKEOVER_HOURS > 0:
             wa_pause(jid)  # human takeover: jij hebt zelf geantwoord
             return JSONResponse({"reply": None, "note": f"pauze {WA_TAKEOVER_HOURS:g}u"})
@@ -1684,6 +1786,77 @@ async def wa_logout_post():
         except Exception as e:  # noqa: BLE001
             print("wa logout cleanup failed:", e)
     return JSONResponse({"ok": True})
+
+WA_CHATS_PAGE = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>Stand van zaken — WhatsApp</title><style>
+body{font-family:system-ui,Segoe UI,sans-serif;background:#0f1716;color:#e8efec;margin:0;padding:20px;max-width:760px}
+h1{font-size:20px}.sub{color:#8aa39c;font-size:13px;margin-bottom:14px}
+.card{background:#182522;border:1px solid #24382f;border-radius:12px;padding:14px;margin-top:12px}
+.naam{font-weight:700;font-size:16px}.badge{display:inline-block;background:#25d366;color:#06281a;
+border-radius:20px;padding:2px 10px;font-size:12px;font-weight:700;margin-left:8px}
+.badge.grijs{background:#31473f;color:#b9cdc6}
+.rij{font-size:14px;margin-top:6px;color:#c8d6d1}.rij b{color:#e8efec}
+.leeg{color:#8aa39c}.laatste{color:#8aa39c;font-size:13px;margin-top:8px;border-top:1px solid #24382f;padding-top:8px}
+.ontbreekt{color:#ffb86b;font-weight:600}
+</style></head><body>
+<h1>📋 Stand van zaken</h1>
+<div class="sub">Elke klant-chat + wat er nog mist · ververst elke 30s · besteld/betaald noteren kan gewoon in WhatsApp: "besteld haroun groene dunks €110"</div>
+__CONTENT__
+</body></html>"""
+
+@app.get("/wa-chats", response_class=HTMLResponse, include_in_schema=False)
+def wa_chats_page(request: Request):
+    key = request.query_params.get("key", "")
+    if ACCESS_CODE and key != ACCESS_CODE:
+        return HTMLResponse("<h1>401 — toegangscode ontbreekt</h1><p>voeg ?key=... toe aan de URL</p>",
+                            status_code=401)
+    with _ledlock:
+        d = ledger_load()
+    chats = d.get("whatsapp", {}).get("chats", {})
+    paused = _wa_pause_map(dict(d))
+    orders = d.get("orders", [])
+    if not chats:
+        content = '<div class="card leeg">Nog geen chats binnengekomen.</div>'
+    else:
+        def _sort(kv):
+            return str((kv[1].get("laatste") or {}).get("ts") or "")
+        delen = []
+        for num, c in sorted(chats.items(), key=_sort, reverse=True):
+            naam = c.get("klantnaam") or c.get("naam") or ("+" + num)
+            status = c.get("status") or "onbekend"
+            badge = f'<span class="badge">{status}</span>' if num not in paused \
+                else '<span class="badge grijs">bot uit</span>'
+            rijen = []
+            if c.get("gezocht"):
+                rijen.append(f'<div class="rij">🔎 <b>Zoekt:</b> {c["gezocht"]}</div>')
+            if c.get("maat"):
+                rijen.append(f'<div class="rij">📏 <b>Maat:</b> {c["maat"]}</div>')
+            if c.get("prijs_afgesproken") is not None:
+                rijen.append(f'<div class="rij">💶 <b>Afgesproken:</b> €{float(c["prijs_afgesproken"]):g}</div>')
+            elif c.get("prijs_gegeven"):
+                rijen.append('<div class="rij">💶 prijs genoemd (bedrag niet vastgelegd)</div>')
+            else:
+                rijen.append('<div class="rij ontbreekt">💶 nog geen prijs genoemd</div>')
+            rijen.append(f'<div class="rij">📷 foto/link: {"✅" if c.get("foto_ontvangen") else "❌ nog geen"}</div>')
+            if c.get("ontbreekt") and c.get("ontbreekt").lower() not in ("leeg", "niets", "niks", "-"):
+                rijen.append(f'<div class="rij ontbreekt">⚠️ Mist nog: {c["ontbreekt"]}</div>')
+            matches = [o for o in orders
+                       if (c.get("klantnaam") or "").lower()
+                       and c["klantnaam"].lower() in str(o.get("customer", "")).lower()][-3:]
+            if matches:
+                otxt = " · ".join(f"#{o['num']} {o.get('items') or '?'} €{float(o.get('price_eur') or 0):g} "
+                                  f"📦{o.get('order_status')} 💶{o.get('payment_status')}" for o in matches)
+                rijen.append(f'<div class="rij">🛒 <b>Orders:</b> {otxt}</div>')
+            laat = c.get("laatste") or {}
+            laatste = f'{laat.get("van", "?")}: {laat.get("tekst", "")}' if laat else "nog niks"
+            delen.append(
+                f'<div class="card"><div class="naam">{naam} <span style="color:#8aa39c;font-size:12px">+{num}</span>{badge}</div>'
+                + "".join(rijen)
+                + f'<div class="laatste">💬 {laatste}</div></div>')
+        content = "".join(delen)
+    return HTMLResponse(WA_CHATS_PAGE.replace("__CONTENT__", content))
 
 WA_QR_PAGE = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
