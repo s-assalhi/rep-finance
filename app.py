@@ -1562,6 +1562,8 @@ def wa_backup_down():
     except Exception as e:  # noqa: BLE001
         print("wa backup down failed:", e)
 
+WA_SELF_JID = "31684805378@s.whatsapp.net"  # 'bericht jezelf'-chat: notitie-bevestigingen landen hier
+
 WA_WELCOME = """Yo, welkom bij YZ Shop
 
 Stuur eerst je voornaam, zodat ik weet met wie ik app — WhatsApp toont soms alleen een nummer. Stuur daarna je Snapchatnaam, plus een foto of link van wat je zoekt en je maat.
@@ -1626,7 +1628,8 @@ async def wa_incoming(req: Request):
             if mm:
                 out = str(run_tool("update_order", json.dumps(
                     {"num": int(mm.group(1)), "order_status": "besteld"}))) or out
-            return JSONResponse({"reply": "📝 " + out, "to_me": True})
+            # bevestiging naar je eigen 'bericht jezelf'-chat, niet in de klant z'n chat
+            return JSONResponse({"reply": "📝 " + out, "to_me": True, "to_chat": WA_SELF_JID})
         if low.startswith("betaald"):
             rest = text[len("betaald"):].strip()
             naam = rest.split()[0] if rest.split() else ""
@@ -1650,9 +1653,11 @@ async def wa_incoming(req: Request):
                     ledger_save(d)
                     hf_sync_up()
                     return JSONResponse({"reply": f"✅ Order #{hit['num']} ({hit['customer']}) op betaald gezet "
-                                                  f"en geld bijgeschreven.", "to_me": True})
+                                                  f"en geld bijgeschreven.", "to_me": True,
+                                         "to_chat": WA_SELF_JID})
             return JSONResponse({"reply": f"❓ Geen open order gevonden voor '{naam}'. "
-                                          f"Check de klantnaam (zelfde spelling als in de order).", "to_me": True})
+                                          f"Check de klantnaam (zelfde spelling als in de order).",
+                                 "to_me": True, "to_chat": WA_SELF_JID})
         if WA_TAKEOVER_HOURS > 0:
             wa_pause(jid)  # human takeover: jij hebt zelf geantwoord
             return JSONResponse({"reply": None, "note": f"pauze {WA_TAKEOVER_HOURS:g}u"})
