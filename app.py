@@ -18,6 +18,7 @@ Env vars (set as Space secrets):
 """
 import asyncio
 import base64
+from datetime import datetime
 import io
 import json
 import mimetypes
@@ -1722,6 +1723,23 @@ async def wa_incoming(req: Request):
         resp["images"] = [i.split(",", 1)[-1] for i in imgs]  # dataURL -> ruwe base64
     return JSONResponse(resp)
 
+@app.post("/whatsapp/notify_unreadable")
+async def wa_notify_unreadable(req: Request):
+    """Bridge kan een inkomend bericht niet ontsleutelen (CIPHERTEXT-stub, oude
+    sessie na herkoppelen) -> waarschuw Younes in zijn bericht-jezelf-chat."""
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False}, status_code=400)
+    num = str(b.get("num") or _wa_key(b.get("chat") or "")).strip()
+    return JSONResponse({
+        "reply": ("⚠️ Bericht van +" + num + " kon ik niet lezen (oude versleuteling na "
+                  "herkoppelen). De chat ziet het wél op je telefoon. Vraag de afzender "
+                  "het gesprek met je zakelijke nummer te verwijderen en opnieuw te "
+                  "sturen — daarna kan de bot het wel lezen."),
+        "to_me": True, "to_chat": WA_SELF_JID})
+
+
 @app.post("/whatsapp/qr")
 async def wa_qr_post(req: Request):
     """Bridge post hier elke nieuwe QR (data-URL) en/of de koppelcode."""
@@ -1807,9 +1825,14 @@ border-radius:20px;padding:2px 10px;font-size:12px;font-weight:700;margin-left:8
 .rij{font-size:14px;margin-top:6px;color:#c8d6d1}.rij b{color:#e8efec}
 .leeg{color:#8aa39c}.laatste{color:#8aa39c;font-size:13px;margin-top:8px;border-top:1px solid #24382f;padding-top:8px}
 .ontbreekt{color:#ffb86b;font-weight:600}
+.banner{border-radius:12px;padding:12px 14px;margin-bottom:6px;font-weight:700;font-size:15px}
+.banner.ok{background:#123a28;border:1px solid #25d366;color:#7dffb8}
+.banner.slecht{background:#3a1212;border:1px solid #ff6b6b;color:#ffb0b0}
+.banner .subfont{display:block;font-weight:400;font-size:13px;margin-top:4px;color:inherit;opacity:.85}
 </style></head><body>
 <h1>📋 Stand van zaken</h1>
 <div class="sub">Elke klant-chat + wat er nog mist · ververst elke 30s · besteld/betaald noteren kan gewoon in WhatsApp: "besteld haroun groene dunks €110"</div>
+__BANNER__
 __CONTENT__
 </body></html>"""
 
@@ -1824,6 +1847,28 @@ def wa_chats_page(request: Request):
     chats = d.get("whatsapp", {}).get("chats", {})
     paused = _wa_pause_map(dict(d))
     orders = d.get("orders", [])
+    # Status-balk: is de bot nu actief en wanneer kwam het laatste bericht binnen?
+    verbonden = WA_STATE.get("status") == "connected"
+    laatste_ts = max([str((c.get("laatste") or {}).get("ts") or "")
+                      for c in chats.values()] or [""])
+    try:
+        laatste_min = int((time.time() - datetime.fromisoformat(laatste_ts).timestamp()) / 60)
+    except Exception:  # noqa: BLE001
+        laatste_min = None
+    if laatste_min is None:
+        laatste_txt = "nog geen berichten ontvangen"
+    elif laatste_min < 1:
+        laatste_txt = "laatste bericht: net nu"
+    elif laatste_min < 60:
+        laatste_txt = f"laatste bericht: {laatste_min} min geleden"
+    else:
+        laatste_txt = f"laatste bericht: {laatste_min // 60} uur geleden"
+    if verbonden:
+        banner = ('<div class="banner ok">✅ Bot is ACTIEF en verbonden met WhatsApp'
+                  f'<span class="subfont">{laatste_txt} · check: {datetime.now().strftime("%H:%M")}</span></div>')
+    else:
+        banner = (f'<div class="banner slecht">❌ Bot is NIET verbonden (status: {WA_STATE.get("status")})'
+                  '<span class="subfont">Herstart de service of koppel opnieuw via /wa-qr</span></div>')
     if not chats:
         content = '<div class="card leeg">Nog geen chats binnengekomen.</div>'
     else:
@@ -1863,7 +1908,7 @@ def wa_chats_page(request: Request):
                 + "".join(rijen)
                 + f'<div class="laatste">💬 {laatste}</div></div>')
         content = "".join(delen)
-    return HTMLResponse(WA_CHATS_PAGE.replace("__CONTENT__", content))
+    return HTMLResponse(WA_CHATS_PAGE.replace("__BANNER__", banner).replace("__CONTENT__", content))
 
 WA_QR_PAGE = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
