@@ -1224,8 +1224,44 @@ def _start():
                     print("oude whatsapp-pauzes gewist (takeover uit)")
         except Exception as e:  # noqa: BLE001
             print("pauzes wissen mislukt:", e)
-    threading.Thread(target=poll_loop, daemon=True).start()
+      threading.Thread(target=poll_loop, daemon=True).start()
 
+      def _herinneringen():
+          # Elke 4 uur: wat moet Younes nog doen? Orders die te bestellen zijn en
+          # orders die "besteld" zijn maar waar geen Basetao-bevestiging aan hangt
+          # ("ik ga het bestellen" gezegd, maar nooit echt gedaan — jij vergeet het
+          # vaak, dus de bot blijft vragen tot het klopt).
+          time.sleep(300)  # pas nadat alles opgestart is
+          while True:
+              try:
+                  regels = []
+                  with _ledlock:
+                      d = ledger_load()
+                      for o in d.get("orders", []):
+                          st = o.get("order_status")
+                          naam = o.get("customer") or "?"
+                          items = o.get("items") or "?"
+                          prijs = float(o.get("price_eur") or 0)
+                          if st == "te_bestellen":
+                              regels.append(f"❗ NOG BESTELLEN: #{o['num']} {naam} — {items} (€{prijs:g})")
+                          elif st == "besteld" and not o.get("basetao_ids"):
+                              ts = str(o.get("updated") or o.get("created") or "")
+                              try:
+                                  oud = time.time() - time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+                              except Exception:  # noqa: BLE001
+                                  oud = 999999
+                              if oud > 12 * 3600:
+                                  regels.append(f"❓ #{o['num']} {naam} — echt al besteld in Basetao? "
+                                                f"Ik zie nog geen bevestiging ({items}).")
+                  if regels:
+                      _stuur_via_bridge(WA_SELF_JID,
+                                        "⏰ Even jou ding, vergeet deze niet:\n" + "\n".join(regels[:8]))
+              except Exception as e:  # noqa: BLE001
+                  print("herinneringen faalden:", e)
+              time.sleep(4 * 3600)
+
+      threading.Thread(target=_herinneringen, daemon=True).start()
+  
     def _wa_periodic_backup():
         # ververs de sessie-backup elke 30 min zolang we verbonden zijn,
         # zodat een herstart nooit een verouderde (Bad MAC) sessie terugzet
