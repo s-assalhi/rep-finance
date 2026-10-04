@@ -367,6 +367,19 @@ async function start(backoffMs = 3000) {
       }
     }
   });
+
+  // Chat-historie van de server (iedereen waarmee dit nummer ooit een chat had):
+  // jids doorgaan naar de backend zodat broadcasts iedereen kunnen bereiken.
+  sock.ev.on('messaging-history.set', async ({ chats }) => {
+    try {
+      const lijst = (chats || []).map((c) => c.id)
+        .filter((id) => id && id.endsWith('@s.whatsapp.net'));
+      log('historie-chats ontvangen:', lijst.length);
+      if (lijst.length) await post('/whatsapp/history_chats', { chats: lijst.slice(0, 800) });
+    } catch (e) {
+      log('historie-chats fout:', e.message);
+    }
+  });
 }
 
 log('Rep Agent WhatsApp-bridge start | backend:', BACKEND_URL, '| sessie:', SESSION_DIR);
