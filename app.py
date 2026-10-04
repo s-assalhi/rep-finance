@@ -1904,6 +1904,20 @@ async def wa_incoming(req: Request):
         resp["images"] = [i.split(",", 1)[-1] for i in imgs]  # dataURL -> ruwe base64
     return JSONResponse(resp)
 
+@app.get("/whatsapp/contacts")
+async def wa_contacts(req: Request):
+    """Bekende chats met hun volledige adres (voor broadcasts/tests)."""
+    key = req.query_params.get("key", "")
+    if ACCESS_CODE and key != ACCESS_CODE:
+        return JSONResponse({"ok": False, "error": "geen toegang"}, status_code=401)
+    with _ledlock:
+        d = ledger_load()
+    chats = d.get("whatsapp", {}).get("chats", {})
+    uit = [{"key": k, "jid": (c.get("jid") or k + "@s.whatsapp.net"),
+            "naam": (c.get("klantnaam") or c.get("naam") or "")}
+           for k, c in chats.items()]
+    return JSONResponse({"ok": True, "chats": uit})
+
 @app.post("/whatsapp/send")
 async def wa_send(req: Request):
     """Direct een WhatsApp-bericht versturen via de bridge (test/debug).
