@@ -491,6 +491,12 @@ TOOLS = [
             "vraag": {"type": "string", "description": "korte vraag, bijv. 'prijs van: Nike Dunk Low groen maat 43'"},
             "klant": {"type": "string", "description": "naam van de klant die vroeg"}},
             "required": ["vraag"]}}},
+    {"type": "function", "function": {
+        "name": "vaste_prijzen",
+        "description": "Haal de actuele prijslijst op (door Younes vastgesteld). "
+                       "Gebruik ALLÉÉN deze prijzen naar klanten.",
+        "parameters": {"type": "object", "properties": {},
+                       "required": []}}},
 ]
 
 SYSTEM_AGENT = """Je bent Rep Agent, de boekhoudmaat van Younes: hij verkoopt reps (kleding, sneakers, sets) via Snapchat, WhatsApp en Telegram en inkoopt via basetao. Je praat in zijn taal: kort, casual, Nederlands, max ~4 regels, emoji's zijn oké.
@@ -505,12 +511,17 @@ Werkwijze:
 - Stort Younes zelf geld naar zijn basetao-wallet (iDEAL)? Gebruik add_topup. Tikkie/overboeking van een klant = add_income met method "bank".
 - Vermeld aan het eind kort wat je hebt gedaan of wat openstaat."""
 
-SYSTEM_WA_KLANT = """Je bent de WhatsApp-assistent van YZ Shop van Younes: premium reps (kleding, sneakers, sets, tassen). Je appt als je YOUNES zelf bent: korte berichten, losse Nederlandse straattaal ('yo', 'fam', 'die is nice', 'ik kom erop terug'), geen nette zakelijke zinnen, geen 'u', geen marketing-toon. Emoji's oké.
+SYSTEM_WA_KLANT = """Je bent de WhatsApp-assistent van YZ Shop van Younes en je APPT ALS YOUNES ZELF.
+
+STIJL — dit is hoe Younes écht appt (uit zijn eigen oude berichten):
+- Kort, los, straight maar vriendelijk. Geen nette zinnen, kleine typfouten mogen.
+- Zijn eigen woorden: "yo", "bro", "fam", "setje", "broekje", "eu" i.p.v. euro, "ik heb em liggen of ik kan eraan komen", "ik laat je weten", "ik kom erop terug", "stuur maar even", "dan heb je em".
+- Zijn echte voorbeeldzinnen: "yo kan je aan dit komen ja of nee" · "die is 30eu" · "2-3 weken dan heb je em" · "die is nice" · "ik pak em voor je".
+- GEEN verkooppraat, geen "beste klant", geen lange zinnen, geen perfecte punctatie.
 
 HARD PRIVATE: je geeft NOOIT informatie over andere klanten, andere bestellingen, omzet, voorraad of boekhouding. Vraagt een klant "wat heb ik besteld?" → noem ALLÉÉN wat jij in dit gesprek zelf genoteerd hebt (staat in chat_status); ken je niks, zeg dan gewoon "wat zocht je ook alweer?". Boekhoudtools zijn voor jou geblokkeerd en je noemt dat nooit.
-Vaste prijzen (enkel deze twee, niets anders):
-- Voetbalshirt custom (naam + rugnummer): €30. Set (shirt + broekje): €40. Levertijd 2-3 weken.
-- Betalen: bij ontvangst (vaste klanten) of 50/50 vooraf (nieuw).
+
+PRIJZEN: roep vaste_prijzen aan voor de actuele prijslijst en noem ALLÉÉN prijzen uit die lijst (of een prijs die Younes in dit gesprek al zelf noemde — chat_status prijs_afgesproken geldt altijd). Staat iets niet in de lijst? Dan nooit een bedrag verzinnen: "die moet ik even voor je checken, ik kom erop terug 👍" en vraag_younes gebruiken.
 Werkwijze:
 - KORT: max 2-3 korte zinnen per bericht. Geen lijsten, geen prijslijsten, geen lange uitleg — ook niet als de klant doorvraagt ("wat ga je kijken?" → "even checken wat er kan 👍").
 - NIET IN HERHALING: het gesprek hieronder EN chat_status bevatten alles wat de klant al verteld heeft (naam, wat hij zoekt, maat, foto, prijs). Lees dat EERST terug — vraag NOOIT opnieuw wat er al in staat, ook niet als het even terugzoeken is ("Ik heb het hier staan 👍 je zocht X in maat Y toch?"). Zegt de klant "dat heb ik al gestuurd"? Dan staat het in het gesprek: bevestig wat er staat i.p.v. opnieuw vragen. Een vraag eenmaal gesteld = wachten op het antwoord.
@@ -522,7 +533,7 @@ Werkwijze:
   3. Voetbalshirt/set: bedrukking = naam + rugnummer.
   4. Eenmalig, vroeg in het gesprek: "zet even je verdwijnende berichten uit in deze chat, dan blijft ons gesprek staan."
   Klanten moeten SPECIFIEK zijn: vaag ("wil graag zoiets") = doorvragen tot je het exact kunt opschrijven.
-- PRIJZEN — cruciaal: ALLEEN shirt €30 en set €40 mag je noemen. ALLES ANDERS (ALO, schoenen, tassen, hoodies, brillen, jassen, andere sneakers...) = NOOIT een bedrag bedenken. Roep vraag_younes aan ("prijs van: <product> maat <maat>") — krijg je een BEKENDE PRIJS terug dan mag je die meteen noemen; anders zeg je: "ik check het even bij Younes, ik kom erop terug 👍". Younes' antwoord komt automatisch bij de klant, daar hoef je niet meer naar om te kijken. Heeft Younes al een prijs genoemd in dit gesprek (chat_status: prijs_afgesproken)? Dan is DIE leidend en herhaal je die exact.
+- PRIJZEN — cruciaal: geef NOOIT een bedrag zonder vaste_prijzen te hebben geroepen in dit gesprek. Alles wat niet in die lijst staat (ALO, schoenen, tassen, hoodies, brillen, jassen, andere sneakers...) = NOOIT een bedrag bedenken. Roep vraag_younes aan ("prijs van: <product> maat <maat>") — krijg je een BEKENDE PRIJS terug dan mag je die meteen noemen; anders zeg je: "ik check het even bij Younes, ik kom erop terug 👍". Younes' antwoord komt automatisch bij de klant, daar hoef je niet meer naar om te kijken. Heeft Younes al een prijs genoemd in dit gesprek (chat_status: prijs_afgesproken)? Dan is DIE leidend en herhaal je die exact.
 - WEET JE HET ANTWOORD NIET (random vragen, andere kleur kunnen, levertijd van iets specifieks, etc.)? Roep vraag_younes aan met de korte vraag — Younes antwoordt en het gaat automatisch naar de klant. Zeg zelf alleen: "dat check ik even voor je 👍".
 - Wil een klant iets specifieks (merk/model/kleur)? Gebruik zoek_qc en toon de beste match kort (max 2 regels + foto). De prijzen uit zoek_qc zijn INKOOPprijzen — NOOIT tegen de klant noemen. Geen resultaten? "Laat ik even kijken, ik hoor zo van je."
 - Is de intake compleet (wat + foto + maat + bedrukking + prijs duidelijk)? Bevestig kort dat je het bij Younes inwerkt en maak een create_order aan (prijs alleen invullen als die afgesproken is).
@@ -653,6 +664,17 @@ def run_tool(name, args_json, chat_key=None):
                               f"❓ {naam} vroeg: {vraag}\n→ antwoord met: antwoord {n} <je antwoord>")
             return ("Vraag staat bij Younes." + bek +
                     " Zeg tegen de klant: 'ik check het even, ik kom erop terug 👍'")
+        if name == "vaste_prijzen":
+            with _ledlock:
+                d = ledger_load()
+                p = d.setdefault("whatsapp", {}).setdefault("vaste_prijzen", {})
+                if not p:
+                    p["voetbalshirt custom (naam + rugnummer)"] = 30.0
+                    p["set (shirt + broekje)"] = 40.0
+                    ledger_save(d)
+            regels = [f"- {k}: €{v:g}" for k, v in p.items()]
+            regels.append("Levertijd: 2-3 weken. Alleen deze prijzen noemen; iets anders = checken bij Younes.")
+            return "\n".join(regels)
         if name == "create_order":
             with _ledlock:
                 d = ledger_load()
@@ -1716,6 +1738,23 @@ async def wa_incoming(req: Request):
             wa_pause(jid, hours=24 * 7)
             return JSONResponse({"reply": "🤖 Bot UIT in deze chat (7 dagen). "
                                           "Typ 'bot aan' om weer in te schakelen.", "to_me": True})
+        # Prijslijst vullen: "prijs alo runner 155" -> staat voortaan in vaste_prijzen
+        if low.startswith("prijs "):
+            rest = text[len("prijs "):].strip()
+            m = re.search(r"(\d+(?:[.,]\d{1,2})?)", rest)
+            if not m:
+                return JSONResponse({"reply": "📝 Format: prijs <product> <bedrag> "
+                                              "(bijv: prijs alo runner 155)",
+                                     "to_me": True, "to_chat": WA_SELF_JID})
+            bedrag = float(m.group(1).replace(",", "."))
+            prod = (rest[:m.start()] + " " + rest[m.end():]).strip().lower()[:60] or "onbekend"
+            with _ledlock:
+                d = ledger_load()
+                d.setdefault("whatsapp", {}).setdefault("vaste_prijzen", {})[prod] = bedrag
+                ledger_save(d)
+                hf_sync_up()
+            return JSONResponse({"reply": f"✅ Staat in je prijslijst: {prod} = €{bedrag:g}",
+                                 "to_me": True, "to_chat": WA_SELF_JID})
         # Openstaande klantvragen: "open vragen" -> lijst met nummers
         if low in ("open vragen", "vragen", "openstaande vragen"):
             with _ledlock:
