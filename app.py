@@ -1675,6 +1675,8 @@ async def wa_incoming(req: Request):
             c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(key, {})
             if b.get("name"):
                 c.setdefault("naam", str(b["name"])[:80])
+            if jid:
+                c["jid"] = jid  # volledige adres (kan een LID zijn) voor direct sturen
             c["laatste"] = {"ts": _now(), "van": "jij" if b.get("from_me") else "klant",
                             "tekst": (text[:200] or f"[{mtype}]")}
             ledger_save(d)
@@ -1734,10 +1736,11 @@ async def wa_incoming(req: Request):
                 if bedrag:
                     c["prijs_afgesproken"] = bedrag
                     c["prijs_gegeven"] = True
+                target_jid = c.get("jid") or (hit["chat_key"][3:] + "@s.whatsapp.net")
                 ledger_save(d)
                 hf_sync_up()
             threading.Thread(target=_stuur_via_bridge,
-                             args=(hit["chat_key"][3:] + "@s.whatsapp.net", antw),
+                             args=(target_jid, antw),
                              daemon=True).start()
             return JSONResponse({"reply": f"✅ Doorgestuurd naar {hit['klant']}: {antw[:80]}",
                                  "to_me": True, "to_chat": WA_SELF_JID})
