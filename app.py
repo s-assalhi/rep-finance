@@ -513,7 +513,7 @@ Vaste prijzen (enkel deze twee, niets anders):
 - Betalen: bij ontvangst (vaste klanten) of 50/50 vooraf (nieuw).
 Werkwijze:
 - KORT: max 2-3 korte zinnen per bericht. Geen lijsten, geen prijslijsten, geen lange uitleg — ook niet als de klant doorvraagt ("wat ga je kijken?" → "even checken wat er kan 👍").
-- NIET IN HERHALING: heb je al iets gevraagd? Wacht dan op het antwoord — herhaal je vraag niet (hooguit één keer, anders geformuleerd, nadat de klant echt reageerde). Zegt de klant dat hij al iets stuurde? Check dan chat_status ipv opnieuw vragen.
+- NIET IN HERHALING: het gesprek hieronder EN chat_status bevatten alles wat de klant al verteld heeft (naam, wat hij zoekt, maat, foto, prijs). Lees dat EERST terug — vraag NOOIT opnieuw wat er al in staat, ook niet als het even terugzoeken is ("Ik heb het hier staan 👍 je zocht X in maat Y toch?"). Zegt de klant "dat heb ik al gestuurd"? Dan staat het in het gesprek: bevestig wat er staat i.p.v. opnieuw vragen. Een vraag eenmaal gesteld = wachten op het antwoord.
 - FOTO'S: staat er [foto] in het gesprek, of foto_ontvangen=true in chat_status? Dan is er AL een foto gestuurd — vraag dan NOOIT nog eens om een foto.
 - Taal: je antwoordt ALTIJD in het Nederlands, ook als de klant Engels of een andere taal schrijft. Alleen Engels als de klant er expliciet om vraagt.
 - INTAKE — voordat iets besteld kan worden heb je ALTIJD deze punten nodig. Vraag ze stap voor stap (1-2 punten per bericht) en herhaal kort wat de klant al gaf:
@@ -1670,7 +1670,8 @@ async def wa_incoming(req: Request):
     text = (b.get("text") or "").strip()
     mtype = b.get("type") or "text"
 
-    # Laatste bericht per chat vastleggen voor het stand-van-zaken-overzicht (/wa-chats)
+    # Laatste bericht + gespreksgeschiedenis per chat vastleggen (staat-van-zaken
+    # + de bot kan teruglezen wat de klant al gezegd heeft, ook na herstart)
     try:
         with _ledlock:
             d = ledger_load()
@@ -1681,9 +1682,30 @@ async def wa_incoming(req: Request):
                 c["jid"] = jid  # volledige adres (kan een LID zijn) voor direct sturen
             c["laatste"] = {"ts": _now(), "van": "jij" if b.get("from_me") else "klant",
                             "tekst": (text[:200] or f"[{mtype}]")}
+            if text:
+                g = c.setdefault("gesprek", [])
+                g.append({"r": "j" if b.get("from_me") else "k", "t": text[:200]})
+                del g[:-30]
             ledger_save(d)
     except Exception:  # noqa: BLE001
         pass
+
+    # Gespreksgeheugen herstellen uit het kasboek als het leeg is (na herstart/deploy):
+    # zo stelt de bot nooit meer vragen die de klant al beantwoord heeft.
+    ck = "wa:" + key
+    if not _chatmem.get(ck):
+        try:
+            with _ledlock:
+                d = ledger_load()
+                c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(key, {})
+                for g in (c.get("gesprek") or [])[-14:]:
+                    rol = "user"
+                    t = g.get("t", "")
+                    if g.get("r") == "j":
+                        t = "(jij zelf): " + t
+                    _chatmem.setdefault(ck, []).append({"role": rol, "content": t})
+        except Exception:  # noqa: BLE001
+            pass
 
     if b.get("from_me"):
         low = text.lower()
@@ -1899,6 +1921,16 @@ async def wa_incoming(req: Request):
     except Exception as e:  # noqa: BLE001
         print("wa agent error:", e)
         return JSONResponse({"reply": None})  # stil falen; Younes ziet de chat in de app
+    try:  # bot-antwoorden ook in het opgeslagen gesprek (teruglezen na herstart)
+        with _ledlock:
+            d = ledger_load()
+            c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(key, {})
+            g = c.setdefault("gesprek", [])
+            g.append({"r": "b", "t": str(answer)[:200]})
+            del g[:-30]
+            ledger_save(d)
+    except Exception:  # noqa: BLE001
+        pass
     resp = {"reply": answer}
     with _srclock:
         imgs = _wa_pending_images.pop("wa:" + key, None)
