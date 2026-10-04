@@ -1904,19 +1904,48 @@ async def wa_incoming(req: Request):
         resp["images"] = [i.split(",", 1)[-1] for i in imgs]  # dataURL -> ruwe base64
     return JSONResponse(resp)
 
+@app.post("/whatsapp/history_chats")
+async def wa_history_chats(req: Request):
+    """Bridge stuurt de chat-jids uit de WhatsApp-historie (iedereen die ooit
+    appte) -> opslaan als broadcast-doelen."""
+    try:
+        b = await req.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False}, status_code=400)
+    nieuw = 0
+    with _ledlock:
+        d = ledger_load()
+        known = d.setdefault("whatsapp", {}).setdefault("known_chats", {})
+        for jid in (b.get("chats") or [])[:800]:
+            if isinstance(jid, str) and jid.endswith("@s.whatsapp.net"):
+                k = _wa_key(jid)
+                if k and k not in known:
+                    known[k] = {"jid": jid}
+                    nieuw += 1
+        ledger_save(d)
+    print(f"historie-chats opgeslagen: {nieuw} nieuw")
+    if nieuw:
+        threading.Thread(target=hf_sync_up, daemon=True).start()
+    return JSONResponse({"ok": True, "nieuw": nieuw})
+
 @app.get("/whatsapp/contacts")
 async def wa_contacts(req: Request):
-    """Bekende chats met hun volledige adres (voor broadcasts/tests)."""
+    """Alle bekende chats (CRM + historie) met hun volledige adres."""
     key = req.query_params.get("key", "")
     if ACCESS_CODE and key != ACCESS_CODE:
         return JSONResponse({"ok": False, "error": "geen toegang"}, status_code=401)
     with _ledlock:
         d = ledger_load()
     chats = d.get("whatsapp", {}).get("chats", {})
-    uit = [{"key": k, "jid": (c.get("jid") or k + "@s.whatsapp.net"),
-            "naam": (c.get("klantnaam") or c.get("naam") or "")}
-           for k, c in chats.items()]
-    return JSONResponse({"ok": True, "chats": uit})
+    known = d.get("whatsapp", {}).get("known_chats", {})
+    merged = {}
+    for k, c in chats.items():
+        merged[k] = {"key": k, "jid": (c.get("jid") or k + "@s.whatsapp.net"),
+                     "naam": (c.get("klantnaam") or c.get("naam") or "")}
+    for k, c in known.items():
+        if k not in merged:
+            merged[k] = {"key": k, "jid": (c.get("jid") or k + "@s.whatsapp.net"), "naam": ""}
+    return JSONResponse({"ok": True, "chats": list(merged.values())})
 
 @app.post("/whatsapp/send")
 async def wa_send(req: Request):
