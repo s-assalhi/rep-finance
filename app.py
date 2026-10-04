@@ -524,6 +524,8 @@ HARD PRIVATE: je geeft NOOIT informatie over andere klanten, andere bestellingen
 PRIJZEN: roep vaste_prijzen aan voor de actuele prijslijst en noem ALLÉÉN prijzen uit die lijst (of een prijs die Younes in dit gesprek al zelf noemde — chat_status prijs_afgesproken geldt altijd). Staat iets niet in de lijst? Dan nooit een bedrag verzinnen: "die moet ik even voor je checken, ik kom erop terug 👍" en vraag_younes gebruiken.
 Werkwijze:
 - KORT: max 2-3 korte zinnen per bericht. Geen lijsten, geen prijslijsten, geen lange uitleg — ook niet als de klant doorvraagt ("wat ga je kijken?" → "even checken wat er kan 👍").
+- EINDE VAN DE CHAT: je hoeft NIET het laatste woord. Heeft de klant genoeg gezegd, of zeggen ze gewoon iets waar je niks op hoeft te vragen? Reageer dan kort en KLAAR: "safi 👍 ik pak em op", "gezet bro", "ik laat je weten". Niet elk bericht afsluiten met een vraag — dat is opdringerig. Vraag ALLÉÉN het punt dat in chat_status.ontbreekt nog écht mist; de rest is al gezegd.
+- DENK ALS YOUNES bij elk bericht: is dit een normale chat? Weet ik wat er aan de hand is? Heb ik genoeg info? Zo ja → kort bevestigen en klaar. Zo nee → alleen het ontbrekende punt vragen, niets opnieuw.
 - NIET IN HERHALING: het gesprek hieronder EN chat_status bevatten alles wat de klant al verteld heeft (naam, wat hij zoekt, maat, foto, prijs). Lees dat EERST terug — vraag NOOIT opnieuw wat er al in staat, ook niet als het even terugzoeken is ("Ik heb het hier staan 👍 je zocht X in maat Y toch?"). Zegt de klant "dat heb ik al gestuurd"? Dan staat het in het gesprek: bevestig wat er staat i.p.v. opnieuw vragen. Een vraag eenmaal gesteld = wachten op het antwoord.
 - FOTO'S: staat er [foto] in het gesprek, of foto_ontvangen=true in chat_status? Dan is er AL een foto gestuurd — vraag dan NOOIT nog eens om een foto.
 - Taal: je antwoordt ALTIJD in het Nederlands, ook als de klant Engels of een andere taal schrijft. Alleen Engels als de klant er expliciet om vraagt.
@@ -1970,6 +1972,28 @@ async def wa_incoming(req: Request):
             ledger_save(d)
     except Exception:  # noqa: BLE001
         pass
+
+    # Mini-briefing naar Younes: wie appt, wat wil die, wat er nog mist.
+    def _briefing():
+        try:
+            with _ledlock:
+                d = ledger_load()
+                c = d.get("whatsapp", {}).get("chats", {}).get(key, {})
+            naam = c.get("klantnaam") or c.get("naam") or ("+" + key)
+            zoek = c.get("gezocht") or "onbekend"
+            if c.get("prijs_afgesproken"):
+                prijs = "€" + str(c["prijs_afgesproken"])
+            elif c.get("prijs_gegeven"):
+                prijs = "prijs gegeven"
+            else:
+                prijs = "nog geen prijs"
+            mist = c.get("ontbreekt") or "niks meer"
+            _stuur_via_bridge(
+                WA_SELF_JID,
+                f"📥 {naam}: \"{text[:80]}\"\n👀 zoekt: {zoek} · 💶 {prijs} · ⚠️ mist: {mist}")
+        except Exception as e:  # noqa: BLE001
+            print("briefing faalde:", e)
+    threading.Thread(target=_briefing, daemon=True).start()
     resp = {"reply": answer}
     with _srclock:
         imgs = _wa_pending_images.pop("wa:" + key, None)
