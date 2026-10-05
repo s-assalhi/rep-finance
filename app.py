@@ -2622,6 +2622,12 @@ def page_fallback(full_path: str):
     elif os.path.isfile(base + ".html"):
         cand = base + ".html"
     else:
+        # generieke productpagina: elke catalogus-slug krijgt een werkende pagina
+        if full_path.startswith("product/") and "/" not in full_path[8:]: 
+            tmpl = os.path.join("static", "product", "_generic", "index.html")
+            if os.path.isfile(tmpl):
+                with open(tmpl, "rb") as f:
+                    return Response(content=f.read(), media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache, max-age=0"})
         raise HTTPException(status_code=404)
     if not os.path.isfile(cand):  # map zonder index.html -> 404 i.p.v. 500
         raise HTTPException(status_code=404)
