@@ -2469,6 +2469,55 @@ def tool_zoek_qc(query, count=3, chat_key=None):
             lines.append(f"   QC: {f}")
     return f"Top {len(items)} op doppel.fit voor '{q}':\n" + "\n".join(lines)
 
+# ---------------- aanvragen (YZ SHOP foto-intake) ----------------
+AANVRAAG_MAP = os.path.join("static", "aanvraag-fotos")
+AANVRAAG_LEDGER = os.path.join("data", "aanvragen.json")
+
+def _aanvraag_ledger_add(item):
+    try:
+        with _ledlock:
+            lijst = []
+            if os.path.exists(AANVRAAG_LEDGER):
+                try:
+                    with open(AANVRAAG_LEDGER, "r", encoding="utf-8") as f:
+                        lijst = json.load(f)
+                except Exception:  # noqa: BLE001
+                    lijst = []
+            lijst.append(item)
+            with open(AANVRAAG_LEDGER, "w", encoding="utf-8") as f:
+                json.dump(lijst, f, ensure_ascii=False, indent=1)
+    except Exception as e:  # noqa: BLE001
+        print("aanvraag ledger fout:", e)
+
+@app.post("/api/aanvragen")
+async def api_aanvragen(request: Request):
+    form = await request.form()
+    if (form.get("website") or "").strip():
+        return JSONResponse({"ok": True, "url": ""})  # honeypot: spampot stil weg
+    naam = (form.get("name") or "?").strip()[:80]
+    telefoon = (form.get("phone") or "").strip()[:30]
+    notitie = (form.get("note") or "").strip()[:500]
+    foto = form.get("photo")
+    if foto is None or not getattr(foto, "filename", ""):
+        return JSONResponse({"ok": False, "error": "foto ontbreekt"}, status_code=400)
+    data = await foto.read()
+    if len(data) > 12 * 1024 * 1024:
+        return JSONResponse({"ok": False, "error": "te groot"}, status_code=413)
+    ext = os.path.splitext(foto.filename or "")[1].lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".heic"):
+        ext = ".jpg"
+    os.makedirs(AANVRAAG_MAP, exist_ok=True)
+    bestand = time.strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(2).hex() + ext
+    with open(os.path.join(AANVRAAG_MAP, bestand), "wb") as f:
+        f.write(data)
+    item = {"ts": _now(), "naam": naam, "telefoon": telefoon, "note": notitie, "foto": bestand}
+    _aanvraag_ledger_add(item)
+    publiek = "https://rep-finance-wa.onrender.com/aanvraag-fotos/" + bestand
+    try:
+        _stuur_via_bridge(WA_SELF_JID, "NIEUWE AANVRAAG van " + naam + " (" + telefoon + ")" + (": " + notitie if notitie else "") + "\nFoto: " + publiek)
+    except Exception as e:  # noqa: BLE001
+        print("aanvraag bridge fout:", e)
+    return JSONResponse({"ok": True, "url": publiek})
 # ---------------- checkout via basetao wallet ----------------
 BASETAO_BASE = "https://www.basetao.com/best-taobao-agent-service"
 BASETAO_PAY_METHOD = os.environ.get("BASETAO_PAY_METHOD", "ideal").strip()
