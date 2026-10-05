@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product — YZ SHOP</title>
+<style>
+  :root { --bg:#171a1b; --txt:#f2f3ed; --dim:#8fa39b; --acc:#d7ff3f; --line:#22332c; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--txt); font-family:-apple-system,"Segoe UI",Roboto,sans-serif; min-height:100vh; }
+  a { color:inherit; text-decoration:none; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px; }
+  .kruimel { color:var(--dim); font-size:13px; margin:18px 0; }
+  .kruimel a:hover { color:var(--acc); }
+  h1 { font-size:clamp(1.5rem,4vw,2.4rem); margin:6px 0 10px; }
+  .prijs { font-size:1.15rem; font-weight:700; margin-bottom:14px; }
+  .lead { color:var(--dim); font-size:.95rem; line-height:1.55; max-width:560px; }
+  .grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:34px; margin-top:22px; }
+  @media (max-width:800px){ .grid { grid-template-columns:1fr; } }
+  .hoofdfoto { width:100%; border-radius:14px; border:1px solid var(--line); display:block; background:#101314; min-height:260px; object-fit:contain; }
+  .thumbs { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+  .thumbs img { width:72px; height:72px; object-fit:cover; border-radius:10px; border:2px solid var(--line); cursor:pointer; }
+  .thumbs img.sel { border-color:var(--acc); }
+  .label-kop { font-size:.78rem; letter-spacing:.12em; color:var(--dim); text-transform:uppercase; margin:20px 0 8px; }
+  .kleurrij { display:flex; gap:8px; flex-wrap:wrap; }
+  .kleur { display:flex; align-items:center; gap:8px; padding:8px 12px; border:1.5px solid var(--line); border-radius:10px; cursor:pointer; font-size:.9rem; }
+  .kleur.sel { border-color:var(--acc); }
+  .kleur .sw { width:22px; height:22px; border-radius:50%; border:1px solid #0006; }
+  .maten { display:flex; gap:6px; flex-wrap:wrap; }
+  .maat { padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-size:.85rem; color:var(--dim); }
+  .knoppen { margin-top:22px; display:flex; gap:10px; flex-wrap:wrap; }
+  .btn { padding:13px 22px; border-radius:10px; font-weight:700; font-size:.95rem; cursor:pointer; border:none; }
+  .btn-wa { background:#25d366; color:#062; }
+  .btn-sec { background:transparent; color:var(--txt); border:1px solid var(--line); }
+  .btn-wa:hover, .btn-sec:hover { filter:brightness(1.1); }
+  .fout { text-align:center; padding:80px 20px; color:var(--dim); }
+  .fout a { color:var(--acc); }
+  .badge { display:inline-block; padding:4px 10px; border-radius:999px; border:1px solid var(--line); color:var(--dim); font-size:.75rem; margin-bottom:8px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="inhoud"><div class="fout">Laden…</div></div>
+<script>
+(function () {
+  var slug = decodeURIComponent(location.pathname.split('/').pop() || '');
+  var TRAVIS = { slug:'travis-low-sneakers', name:'Travis low sneakers', category:'Schoenen', price:'Prijs op aanvraag', leadTime:'Na persoonlijke bevestiging', description:'Bekijk 12 uitvoeringen uit de leverancierslijst. Van twee eerder bestelde kleuren zie je echte QC-foto\u2019s; bij de overige uitvoeringen kun je een foto aanvragen.', variants:[
+    { name:'Donkerbruin \u00B7 9.0', photos:['/travis-low/bruin-zij.jpg','/travis-low/bruin-boven.jpg','/travis-low/bruin-andere-zij.jpg','/travis-low/bruin-achter.jpg','/travis-low/qc/DM7866-162-1.jpg','/travis-low/qc/DM7866-162-2.jpg','/travis-low/qc/DM7866-162-3.jpg','/travis-low/qc/DM7866-162-4.jpg'] },
+    { name:'Groen / wit \u00B7 8.0', photos:['/travis-low/groen-zij.jpg','/travis-low/groen-boven.jpg','/travis-low/groen-andere-zij.jpg','/travis-low/groen-achter.jpg'] },
+    { name:'Bruin \u00B7 1.0', photos:['/travis-low/qc/supplier-CQ4277-001.jpg','/travis-low/qc/Q2-CQ4277-001-1.jpg','/travis-low/qc/Q2-CQ4277-001-2.jpg','/travis-low/qc/Q2-CQ4277-001-3.jpg','/travis-low/qc/Q2-CQ4277-001-4.jpg','/travis-low/qc-bruin.jpg'] },
+    { name:'Wit / bruin \u00B7 3.0', photos:['/travis-low/qc/supplier-DM7866-162.jpg','/travis-low/qc/Q2-DM7866-162-1.jpg','/travis-low/qc/Q2-DM7866-162-2.jpg','/travis-low/qc/Q2-DM7866-162-3.jpg','/travis-low/qc/Q2-DM7866-162-4.jpg'] },
+    { name:'Zwart \u00B7 4.0', photos:['/travis-low/qc/supplier-DM7866-001.jpg','/travis-low/qc/DM7866-001-1.jpg','/travis-low/qc/DM7866-001-2.jpg','/travis-low/qc/DM7866-001-3.jpg','/travis-low/qc/DM7866-001-4.jpg'] },
+    { name:'Blauw \u00B7 10', photos:['/travis-low/qc/supplier-DM7866-140.jpg','/travis-low/qc/Q2-DM7866-140-1.jpg','/travis-low/qc/Q2-DM7866-140-2.jpg','/travis-low/qc/Q2-DM7866-140-3.jpg','/travis-low/qc/Q2-DM7866-140-4.jpg'] },
+    { name:'Blauw / geel \u00B7 7.0', photos:['/travis-low/qc/supplier-CT0856-700.jpg'] },
+    { name:'Groen \u00B7 5.0', photos:['/travis-low/qc/supplier-DZ4137-106.jpg','/travis-low/qc-groen.jpg'] },
+    { name:'Roze \u00B7 12', photos:['/travis-low/qc-roze.jpg'] }
+  ]};
+  var VOETBAL = { slug:'voetbalshirt-voorbeeld', name:'Voetbalshirt op aanvraag', category:'Shirts & truien', price:'vanaf \u20AC 30,00', leadTime:'Na bevestiging', description:'Stuur een foto. We vragen na of dit shirt leverbaar is. Daarna kun je maat, naam en nummer doorgeven.', variants:[{ name:'Op aanvraag', photos:[] }] };
+
+  fetch('/products-data.json').then(function (r) { return r.json(); }).then(function (lijst) {
+    var p = null;
+    for (var i = 0; i < lijst.length; i++) { if (lijst[i].slug === slug) { p = lijst[i]; break; } }
+    if (!p && slug === TRAVIS.slug) p = TRAVIS;
+    if (!p && slug === VOETBAL.slug) p = VOETBAL;
+    if (!p) { nietGevonden(); return; }
+    render(p);
+  }).catch(nietGevonden);
+
+  function nietGevonden() {
+    document.getElementById('inhoud').innerHTML = '<div class="fout"><p>Dit product staat niet (meer) in de collectie.</p><p style="margin-top:10px"><a href="/">\u2190 Terug naar de shop</a></p></div>';
+  }
+
+  function render(p) {
+    document.title = p.name + ' \u2014 YZ SHOP';
+    var fotos = [];
+    (p.variants || []).forEach(function (v) { (v.photos || []).forEach(function (u) { if (fotos.indexOf(u) < 0) fotos.push(u); }); });
+    var heeftFoto = fotos.length > 0;
+    var el = document.getElementById('inhoud');
+    el.innerHTML =
+      '<div class="kruimel"><a href="/">Home</a> / <a href="/#collectie">' + (p.category || 'Collectie') + '</a> / ' + p.name + '</div>' +
+      '<span class="badge">' + (p.category || '') + ' \u00B7 YZ SHOP</span>' +
+      '<h1>' + esc(p.name) + '</h1>' +
+      '<div class="prijs">' + esc(p.price || 'Prijs op aanvraag') + '</div>' +
+      '<p class="lead">' + esc(p.description || 'Prijs, beschikbaarheid en levertijd bevestigen we persoonlijk.') + '</p>' +
+      '<div class="grid">' +
+        '<div>' +
+          (heeftFoto
+            ? '<img class="hoofdfoto" id="hf" src="' + fotos[0] + '" alt="' + esc(p.name) + '">'
+              + '<div class="thumbs" id="thumbs"></div>'
+            : '<div class="fout" style="padding:60px 10px;border:1px solid var(--line);border-radius:14px">Foto voor dit model volgt \u2014 stuur een berichtje en we sturen \u2019m direct.</div>')
+        + '</div>' +
+        '<div>' +
+          '<div class="label-kop">Kleur / uitvoering</div><div class="kleurrij" id="kleurrij"></div>' +
+          '<div class="label-kop">Maten</div><div class="maten" id="maten"></div>' +
+          '<div class="label-kop">Levertijd</div><div>' + esc(p.leadTime || 'Na persoonlijke bevestiging') + '</div>' +
+          '<div class="knoppen">' +
+            '<a class="btn btn-wa" id="wa" target="_blank" rel="noopener">Vraag aan via WhatsApp</a>' +
+            '<a class="btn btn-sec" href="/">Terug naar de shop</a>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    var stand = { kleur: (p.variants && p.variants[0] ? p.variants[0].name : '') };
+    var wa = document.getElementById('wa');
+    function waLink() {
+      var txt = 'Hi! Ik wil aanvragen: ' + p.name + (stand.kleur ? ' (' + stand.kleur + ')' : '');
+      wa.href = 'https://wa.me/31684805378?text=' + encodeURIComponent(txt);
+    }
+    var kleurrij = document.getElementById('kleurrij');
+    (p.variants || []).forEach(function (v) {
+      var d = document.createElement('div');
+      d.className = 'kleur' + (v.name === stand.kleur ? ' sel' : '');
+      d.innerHTML = '<span class="sw" style="background:' + esc(v.swatch || '#424a43') + '"></span>' + esc(v.name);
+      d.onclick = function () {
+        stand.kleur = v.name;
+        Array.prototype.forEach.call(kleurrij.children, function (c) { c.classList.remove('sel'); });
+        d.classList.add('sel');
+        waLink();
+        var vFotos = v.photos || [];
+        var hf = document.getElementById('hf');
+        var th = document.getElementById('thumbs');
+        if (hf && vFotos.length) hf.src = vFotos[0];
+        if (th) {
+          th.innerHTML = '';
+          vFotos.forEach(function (u) {
+            var im = document.createElement('img');
+            im.src = u; im.loading = 'lazy'; im.alt = p.name + ' ' + v.name;
+            im.onclick = function () { if (hf) hf.src = u; };
+            th.appendChild(im);
+          });
+        }
+      };
+      kleurrij.appendChild(d);
+    });
+    if (!(p.variants && p.variants.length)) kleurrij.innerHTML = '<span style="color:var(--dim)">E\u00E9n uitvoering</span>';
+    var maten = document.getElementById('maten');
+    var alleMaten = [];
+    (p.variants || []).forEach(function (v) { (v.sizes || []).forEach(function (s) { if (alleMaten.indexOf(s) < 0) alleMaten.push(s); }); });
+    maten.innerHTML = alleMaten.length ? alleMaten.map(function (s) { return '<span class="maat">' + esc(s) + '</span>'; }).join('') : '<span style="color:var(--dim)">In overleg</span>';
+    if (heeftFoto) {
+      var th = document.getElementById('thumbs');
+      var eerste = (p.variants[0] && p.variants[0].photos) || fotos;
+      eerste.forEach(function (u) {
+        var im = document.createElement('img');
+        im.src = u; im.loading = 'lazy'; im.alt = p.name;
+        im.onclick = function () { var hf2 = document.getElementById('hf'); if (hf2) hf2.src = u; };
+        th.appendChild(im);
+      });
+    }
+    waLink();
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+})();
+</script>
+</body>
+</html>
