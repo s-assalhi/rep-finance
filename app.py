@@ -1194,6 +1194,8 @@ async def access_gate(request: Request, call_next):
     """Site is openbaar; alleen beheer-routes vereisen de toegangscode."""
     if request.method == "OPTIONS":  # CORS-voorvraag: altijd doorlaten
         return await call_next(request)
+    if request.url.path == "/api/aanvragen":  # publieke foto-intake (YZ SHOP): geen key
+        return await call_next(request)
     path = request.url.path
     gated = (path.startswith("/admin") or path.startswith("/api")
              or path.startswith("/stats") or path.startswith("/orders")
