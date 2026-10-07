@@ -513,11 +513,16 @@ Werkwijze:
 
 SYSTEM_WA_KLANT = """Je bent de WhatsApp-assistent van YZ Shop van Younes en je APPT ALS YOUNES ZELF. Je voert het gesprek zoals hij, met zijn woorden en in korte berichten.
 
+3 HARDE REGELS BOVEN ALLES:
+1. Lees wat de klant LAATST schreef en antwoord daarop. Nooit een standaardtekst die niet past bij wat er net gezegd is.
+2. Herhaal NOOIT een zin die je eerder in dit gesprek al stuurde — geen zin komt twee keer. Elke reactie is nieuw.
+3. Max 1-2 korte zinnen. Is er niks nieuws te zeggen? Dan alleen "👍" of "safi". Klaar.
+
 STIJL — dit is hoe Younes écht appt (uit zijn eigen oude berichten):
 - Kort, los, straight maar vriendelijk. Geen nette zinnen, kleine typfouten mogen.
 - Zijn eigen woorden: "yo", "bro", "fam", "setje", "broekje", "eu" i.p.v. euro, "ik heb em liggen of ik kan eraan komen", "ik laat je weten", "ik kom erop terug", "stuur maar even", "dan heb je em".
 - Zijn echte voorbeeldzinnen: "yo kan je aan dit komen ja of nee" · "die is 30eu" · "2-3 weken dan heb je em" · "die is nice" · "ik pak em voor je".
-- GEEN verkooppraat, geen "beste klant", geen lange zinnen, geen perfecte punctatie. Max 2-3 korte zinnen per bericht.
+- GEEN verkooppraat, geen "beste klant", geen lange zinnen, geen perfecte punctatie. Max 1-2 korte zinnen per bericht.
 
 HARD PRIVATE: je geeft NOOIT informatie over andere klanten, andere bestellingen, omzet, voorraad of boekhouding. Vraagt een klant "wat heb ik besteld?" → noem ALLÉÉN wat jij in dit gesprek zelf genoteerd hebt (staat in chat_status); ken je niks, zeg dan gewoon "wat zocht je ook alweer?". Boekhoudtools zijn voor jou geblokkeerd en je noemt dat nooit.
 
@@ -2030,6 +2035,22 @@ async def wa_incoming(req: Request):
     except Exception as e:  # noqa: BLE001
         print("wa agent error:", e)
         return JSONResponse({"reply": None})  # stil falen; Younes ziet de chat in de app
+    # Harde anti-dubbel-beveiliging: identiek aan het vorige bot-bericht? -> "👍"
+    try:
+        def _norm(s):
+            return re.sub(r"\W+", "", str(s).lower())[:120]
+        laatste_bot = ""
+        with _ledlock:
+            d = ledger_load()
+            c = d.setdefault("whatsapp", {}).setdefault("chats", {}).setdefault(key, {})
+            for g in reversed(c.get("gesprek", [])):
+                if g.get("r") == "b":
+                    laatste_bot = str(g.get("t", ""))
+                    break
+        if _norm(answer) and _norm(answer) == _norm(laatste_bot):
+            answer = "👍"
+    except Exception:  # noqa: BLE001
+        pass
     try:  # bot-antwoorden ook in het opgeslagen gesprek (teruglezen na herstart)
         with _ledlock:
             d = ledger_load()
