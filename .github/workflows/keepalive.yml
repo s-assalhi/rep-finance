@@ -10,6 +10,6 @@ jobs:
     steps:
       - name: ping healthz (houdt Render-service 24/7 wakker)
         run: |
-          curl -sS -m 60 -o /dev/null -w "healthz HTTP %{http_code}\n" https://rep-finance-wa.onrender.com/healthz
+          curl -sS -m 60 -o /dev/null -w "healthz HTTP %{http_code}\n" https://rep-finance-1t6z.onrender.com/healthz
           sleep 240
-          curl -sS -m 60 -o /dev/null -w "healthz HTTP %{http_code}\n" https://rep-finance-wa.onrender.com/healthz
+          curl -sS -m 60 -o /dev/null -w "healthz HTTP %{http_code}\n" https://rep-finance-1t6z.onrender.com/healthz
