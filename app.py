@@ -952,8 +952,13 @@ def handle_command(chat_id, text):
         tg("sendMessage", chat_id=chat_id,
            text="ℹ️ Gebruik: /order klant | items | bedrag · /orders · /status #1 besteld · /betaald #1 cash · /klant #1 Koppig")
 
+_tg_last_poll = 0.0
+_tg_last_err = ""
+
+
 def poll_loop():
     # startpositie herstellen uit het kasboek zodat herstarts geen herhaling geven
+    global _tg_last_poll, _tg_last_err
     try:
         with _ledlock:
             offset = int(ledger_load().get("tg_offset") or 0)
@@ -962,6 +967,7 @@ def poll_loop():
     print("telegram polling started, token set:", bool(TELEGRAM_TOKEN), "| offset:", offset)
     while True:
         if not TELEGRAM_TOKEN:
+            _tg_last_err = "geen token"
             time.sleep(30)
             continue
         try:
@@ -970,6 +976,8 @@ def poll_loop():
                 params={"timeout": 25, "offset": offset,
                         "allowed_updates": json.dumps(["message"])},
                 timeout=35)
+            _tg_last_poll = time.time()
+            _tg_last_err = ""
             for u in r.json().get("result", []):
                 offset = u["update_id"] + 1
                 try:
@@ -981,6 +989,7 @@ def poll_loop():
                 except Exception as e:  # noqa: BLE001
                     print("handle error:", e)
         except Exception as e:  # noqa: BLE001
+            _tg_last_err = repr(e)[:300]
             print("poll error:", e)
             time.sleep(5)
 
@@ -1389,8 +1398,10 @@ def admin():
 
 @app.get("/healthz")
 def healthz():
+    hart = int(time.time() - _tg_last_poll) if _tg_last_poll else None
     return {"ok": True, "bot_configured": bool(TELEGRAM_TOKEN),
-            "whatsapp": WA_STATE["status"] if WHATSAPP_ENABLED else "uit"}
+            "whatsapp": WA_STATE["status"] if WHATSAPP_ENABLED else "uit",
+            "tg_poll_ago_sec": hart, "tg_poll_err": _tg_last_err}
 
 @app.get("/stats")
 def stats():
