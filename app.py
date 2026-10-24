@@ -2555,35 +2555,74 @@ async def api_aanvragen(request: Request):
 # ---------------- checkout via basetao wallet ----------------
 BASETAO_BASE = "https://www.basetao.com/best-taobao-agent-service"
 BASETAO_PAY_METHOD = os.environ.get("BASETAO_PAY_METHOD", "ideal").strip()
+BASETAO_USER = os.environ.get("BASETAO_USER", "").strip()
+BASETAO_PASS = os.environ.get("BASETAO_PASS", "").strip()
+_BT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
+_bt_sessie = None  # module-cache: ingelogde requests.Session
 
-def _bt_session():
-    if not BASETAO_COOKIE:
-        raise RuntimeError("BASETAO_COOKIE niet ingesteld (Render secret)")
-    s = requests.Session()
-    # Let op: X-Requested-With mag NIET op de hele sessie staan — basetao serveert
-    # de recharge-pagina dan als AJAX-variant zónder het bt_sb_token-formulier.
-    s.headers.update({
-        "Cookie": BASETAO_COOKIE,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
-        "Referer": BASETAO_BASE + "/my_account/account/recharge.html",
-    })
+def _bt_ajax_headers(referer):
+    return {"X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Referer": referer,
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
+
+def _bt_login(s):
+    """Log zelf in met BASETAO_USER/PASS (endpoint /login/log_in, zelfde
+    token+data-JSON patroon als de rest van de site). Werkt server-side,
+    dus geen geoogste cookies meer nodig."""
+    r = s.get(BASETAO_BASE + "/accounts/login.html", timeout=30,
+              params={"r": str(int(time.time() * 1000))})
+    m = re.search(r'name="bt_sb_token"[^>]*value="([0-9a-f]+)"', r.text)
+    if not m:
+        raise RuntimeError("basetao login-token niet gevonden (Cloudflare?)")
+    r2 = s.post(BASETAO_BASE + "/login/log_in",
+                headers=_bt_ajax_headers(BASETAO_BASE + "/accounts/login.html"),
+                data={"bt_sb_token": m.group(1),
+                      "data": json.dumps({"user-login": BASETAO_USER,
+                                          "login-pass": BASETAO_PASS})},
+                timeout=30)
+    try:
+        out = r2.json()
+    except ValueError:
+        raise RuntimeError("basetao login gaf geen JSON http " + str(r2.status_code))
+    if str(out.get("value")) != "1":
+        raise RuntimeError("basetao login weigerde: " + str(out.get("msg"))[:120])
     return s
 
-def basetao_create_recharge(amount_eur: float):
+def _bt_session(vers=False):
+    """Ingelogde sessie: log in met user/pass (voorkeur), anders val terug op
+    de oude BASETAO_COOKIE."""
+    global _bt_sessie
+    if _bt_sessie is not None and not vers:
+        return _bt_sessie
+    s = requests.Session()
+    s.headers.update({"User-Agent": _BT_UA})
+    if BASETAO_USER and BASETAO_PASS:
+        _bt_login(s)
+    elif BASETAO_COOKIE:
+        s.headers.update({"Cookie": BASETAO_COOKIE})
+    else:
+        raise RuntimeError("BASETAO_USER/PASS of BASETAO_COOKIE niet ingesteld")
+    _bt_sessie = s
+    return s
+
+def basetao_create_recharge(amount_eur: float, _retry=True):
     """Maak een basetao top-up order voor exact dit bedrag en geef de gehoste
     betaalpagina-URL terug: een normale iDEAL-checkout voor de klant, het
     bedrag komt op onze eigen basetao-wallet."""
     s = _bt_session()
     r = s.get(BASETAO_BASE + "/my_account/account/recharge.html", timeout=30,
-              params={"r": str(int(time.time() * 1000))})
+              params={"r": str(int(time.time() * 1000))},
+              headers={"Referer": BASETAO_BASE + "/my_account/welcome.html"})
     m = re.search(r'name="bt_sb_token"[^>]*value="([0-9a-f]+)"', r.text)
     if not m:
-        raise RuntimeError("basetao-token niet gevonden (sessie/cookie verlopen?)")
-    # zelfde headers als de jQuery-ajax van de site (dataType json -> Accept json)
+        if _retry and BASETAO_USER:
+            _bt_session(vers=True)
+            return basetao_create_recharge(amount_eur, _retry=False)
+        raise RuntimeError("basetao-token niet gevonden (sessie verlopen?)")
     r2 = s.post(BASETAO_BASE + "/account/recharge",
-                headers={"X-Requested-With": "XMLHttpRequest",
-                         "Accept": "application/json, text/javascript, */*; q=0.01"},
+                headers=_bt_ajax_headers(BASETAO_BASE + "/my_account/account/recharge.html"),
                 data={"bt_sb_token": m.group(1),
                       "data": json.dumps({"option": BASETAO_PAY_METHOD,
                                           "money": f"{amount_eur:.2f}"})},
@@ -2594,8 +2633,9 @@ def basetao_create_recharge(amount_eur: float):
         raise RuntimeError("basetao gaf geen JSON (Cloudflare?) http " + str(r2.status_code))
     if str(out.get("value")) != "1":
         msg = str(out.get("msg"))[:120]
-        if "log in again" in msg.lower():
-            raise RuntimeError("basetao-sessie verlopen (bt_session dood) -> cookie verversen")
+        if "log in again" in msg.lower() and _retry and BASETAO_USER:
+            _bt_session(vers=True)
+            return basetao_create_recharge(amount_eur, _retry=False)
         raise RuntimeError("basetao weigerde: " + msg)
     return BASETAO_BASE + "/torecharge/index/" + str(out["msg"]) + ".html"
 
