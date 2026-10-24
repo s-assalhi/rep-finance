@@ -2546,7 +2546,7 @@ async def api_aanvragen(request: Request):
         f.write(data)
     item = {"ts": _now(), "naam": naam, "telefoon": telefoon, "note": notitie, "foto": bestand}
     _aanvraag_ledger_add(item)
-    publiek = "https://rep-finance-wa.onrender.com/aanvraag-fotos/" + bestand
+    publiek = "https://rep-finance-1t6z.onrender.com/aanvraag-fotos/" + bestand
     try:
         _stuur_via_bridge(WA_SELF_JID, "NIEUWE AANVRAAG van " + naam + " (" + telefoon + ")" + (": " + notitie if notitie else "") + "\nFoto: " + publiek)
     except Exception as e:  # noqa: BLE001
@@ -2560,12 +2560,13 @@ def _bt_session():
     if not BASETAO_COOKIE:
         raise RuntimeError("BASETAO_COOKIE niet ingesteld (Render secret)")
     s = requests.Session()
+    # Let op: X-Requested-With mag NIET op de hele sessie staan — basetao serveert
+    # de recharge-pagina dan als AJAX-variant zónder het bt_sb_token-formulier.
     s.headers.update({
         "Cookie": BASETAO_COOKIE,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
         "Referer": BASETAO_BASE + "/my_account/account/recharge.html",
-        "X-Requested-With": "XMLHttpRequest",
     })
     return s
 
@@ -2574,11 +2575,15 @@ def basetao_create_recharge(amount_eur: float):
     betaalpagina-URL terug: een normale iDEAL-checkout voor de klant, het
     bedrag komt op onze eigen basetao-wallet."""
     s = _bt_session()
-    r = s.get(BASETAO_BASE + "/my_account/account/recharge.html", timeout=30)
+    r = s.get(BASETAO_BASE + "/my_account/account/recharge.html", timeout=30,
+              params={"r": str(int(time.time() * 1000))})
     m = re.search(r'name="bt_sb_token"[^>]*value="([0-9a-f]+)"', r.text)
     if not m:
-        raise RuntimeError("basetao-token niet gevonden (cookie verlopen?)")
+        raise RuntimeError("basetao-token niet gevonden (sessie/cookie verlopen?)")
+    # zelfde headers als de jQuery-ajax van de site (dataType json -> Accept json)
     r2 = s.post(BASETAO_BASE + "/account/recharge",
+                headers={"X-Requested-With": "XMLHttpRequest",
+                         "Accept": "application/json, text/javascript, */*; q=0.01"},
                 data={"bt_sb_token": m.group(1),
                       "data": json.dumps({"option": BASETAO_PAY_METHOD,
                                           "money": f"{amount_eur:.2f}"})},
@@ -2588,7 +2593,10 @@ def basetao_create_recharge(amount_eur: float):
     except ValueError:
         raise RuntimeError("basetao gaf geen JSON (Cloudflare?) http " + str(r2.status_code))
     if str(out.get("value")) != "1":
-        raise RuntimeError("basetao weigerde: " + str(out.get("msg"))[:120])
+        msg = str(out.get("msg"))[:120]
+        if "log in again" in msg.lower():
+            raise RuntimeError("basetao-sessie verlopen (bt_session dood) -> cookie verversen")
+        raise RuntimeError("basetao weigerde: " + msg)
     return BASETAO_BASE + "/torecharge/index/" + str(out["msg"]) + ".html"
 
 def _checkout_error(status: int, bericht: str):
