@@ -2637,7 +2637,29 @@ def basetao_create_recharge(amount_eur: float, _retry=True):
             _bt_session(vers=True)
             return basetao_create_recharge(amount_eur, _retry=False)
         raise RuntimeError("basetao weigerde: " + msg)
-    return BASETAO_BASE + "/torecharge/index/" + str(out["msg"]) + ".html"
+    torecharge = BASETAO_BASE + "/torecharge/index/" + str(out["msg"]) + ".html"
+    # De torecharge-pagina is sessie-gebonden: een klant zonder basetao-login
+    # komt daar op de homepage terecht. Met onze eigen bot-sessie gehaald ketent
+    # hij door: torecharge -> redirect.ppro.com (JWT, cookies loos) ->
+    # pay.ideal.nl (echte publieke iDEAL-pagina). We lossen de keten server-side
+    # op en sturen de klant rechtstreeks naar iDEAL.
+    try:
+        r3 = s.get(torecharge, allow_redirects=False, timeout=30,
+                   headers={"Referer": BASETAO_BASE + "/my_account/account/recharge.html",
+                            "Accept": "text/html"})
+        hop = r3.headers.get("Location", "") or ""
+        if r3.status_code in (301, 302, 303, 307, 308) and "ppro.com" in hop:
+            r4 = requests.get(hop, allow_redirects=False, timeout=30,
+                              headers={"User-Agent": _BT_UA})
+            ideal = r4.headers.get("Location", "") or ""
+            if r4.status_code in (301, 302, 303, 307, 308) and "pay.ideal.nl" in ideal:
+                return ideal
+            print("checkout: ppro-hop zonder ideal-locatie:", r4.status_code, ideal[:100])
+        else:
+            print("checkout: torecharge zonder ppro-hop:", r3.status_code, hop[:100])
+    except Exception as e:  # noqa: BLE001
+        print("checkout: ppro-hop fout:", e)
+    return torecharge
 
 def _checkout_error(status: int, bericht: str):
     """Vriendelijke HTML-foutpagina voor /checkout i.p.v. kale JSON."""
