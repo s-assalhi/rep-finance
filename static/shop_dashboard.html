@@ -394,11 +394,11 @@ function fmtEuro(v){
 }
 var MAANDEN = ["jan","feb","mrt","apr","mei","jun","jul","aug","sep","okt","nov","dec"];
 var DAGEN = ["zo","ma","di","wo","do","vr","za"];
-function parseDatum(s){ // "2026-10-27 22:12:34" -> Date (lokaal)
+function parseDatum(s){ // "2026-10-27 22:12:34" of "2026-10-27" -> Date (lokaal)
   if(!s) return null;
-  var m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(s));
+  var m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(String(s));
   if(!m) return null;
-  return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0));
+  return new Date(+m[1], +m[2]-1, +m[3], +(m[4]||0), +(m[5]||0), +(m[6]||0));
 }
 function fmtKort(s){ var d = parseDatum(s); if(!d) return String(s||"—");
   return ("0"+d.getDate()).slice(-2)+"-"+MAANDEN[d.getMonth()]+" "+("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2); }
@@ -516,8 +516,12 @@ function probeerKey(){
     .then(function(r){ return r.json().then(function(j){ return {status:r.status, j:j}; }); })
     .then(function(res){
       $("keyKnop").disabled = false;
-      if(res.status === 401 || !res.j || res.j.ok === false){
-        toonKeyFout(res.j && res.j.error ? "Code klopt niet." : "Code klopt niet — probeer opnieuw.");
+      if(res.status === 401){
+        toonKeyFout("Code klopt niet — probeer opnieuw.");
+        return;
+      }
+      if(!res.j || res.j.ok !== true){
+        toonKeyFout("Server reageert niet goed — probeer straks opnieuw.");
         return;
       }
       try{ localStorage.setItem(LS_KEY, k); }catch(e){}
@@ -660,6 +664,13 @@ function renderOverzicht(a){
   inh.innerHTML = kaarten +
     '<div class="panel"><h2>Omzet per dag <small>laatste 14 dagen</small></h2><div id="grafiekWrap">'+grafiekSvg(a.per_dag||[])+'</div></div>' +
     '<div class="panel"><h2>Top producten <small>op aantal verkocht</small></h2>' + topProducten(a.top_producten||[]) + '</div>';
+  tekenGrafiekOpnieuw(a.per_dag||[]);
+}
+/* grafiek op echte containerbreedte (na place in de DOM) + bij resize */
+function tekenGrafiekOpnieuw(perDag){
+  var gw = $("grafiekWrap");
+  if(!gw || !perDag || !perDag.length) return;
+  gw.innerHTML = grafiekSvg(perDag, gw.clientWidth);
 }
 function topProducten(top){
   if(!top.length) return '<div class="leeg">Nog geen producten verkocht.</div>';
@@ -670,9 +681,9 @@ function topProducten(top){
 }
 
 /* grafiek: inline SVG, balken in limoen, dag-labels, title-tooltip */
-function grafiekSvg(perDag){
+function grafiekSvg(perDag, forcerendeBreedte){
   var wrap = $("grafiekWrap");
-  var W = Math.max(300, (wrap && wrap.clientWidth) || 640);
+  var W = Math.max(300, forcerendeBreedte || (wrap && wrap.clientWidth) || 640);
   if(!perDag.length) return '<div class="leeg">Nog geen data.</div>';
   var H = 190, top = 14, bod = 168, plotH = bod - top;
   var padL = 8, padR = 8;
@@ -1000,9 +1011,7 @@ window.addEventListener("resize", function(){
   clearTimeout(rsTimer);
   rsTimer = setTimeout(function(){
     if(state.tab === "overzicht" && state.data){
-      var a = state.data.analytics || {};
-      var gw = $("grafiekWrap");
-      if(gw) gw.innerHTML = grafiekSvg(a.per_dag || []);
+      tekenGrafiekOpnieuw(state.data.analytics ? (state.data.analytics.per_dag||[]) : []);
     }
   }, 150);
 });
