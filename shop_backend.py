@@ -333,7 +333,8 @@ def shop_data(request: Request):
             "adres": w.get("adres"), "items": w.get("items") or [],
             "totaal": _order_bedrag(o), "betaal_status": w.get("betaal_status"),
             "order_status": o.get("order_status"), "marketing": bool(w.get("marketing")),
-            "notitie": w.get("notitie") or ""})
+            "notitie": w.get("notitie") or "",
+            "vermoed_betaald": w.get("vermoed_betaald") or None})
     klanten_uit = []
     for email, c in sorted((d.get("shop", {}).get("customers") or {}).items()):
         besteed = sum(_order_bedrag(o) for o in ws_orders
