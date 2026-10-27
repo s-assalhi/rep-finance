@@ -1214,7 +1214,8 @@ async def access_gate(request: Request, call_next):
     gated = (path.startswith("/admin") or path.startswith("/api")
              or path.startswith("/stats") or path.startswith("/orders")
              or path.startswith("/basetao") or path.startswith("/docs")
-             or path.startswith("/openapi") or path.startswith("/whatsapp"))
+             or path.startswith("/openapi") or path.startswith("/whatsapp")
+             or path.startswith("/shop-dashboard"))
     if ACCESS_CODE and gated:
         code = (request.query_params.get("key")
                 or request.headers.get("x-access-code")
@@ -1241,6 +1242,10 @@ def _start():
         except Exception as e:  # noqa: BLE001
             print("pauzes wissen mislukt:", e)
     threading.Thread(target=poll_loop, daemon=True).start()
+    try:
+        shop_startup()  # webshop: wallet-controle-thread (betaald-detectie, best effort)
+    except Exception as e:  # noqa: BLE001
+        print("shop startup mislukt:", e)
 
     def _herinneringen():
         # Elke 4 uur: wat moet Younes nog doen? Orders die te bestellen zijn en
@@ -1640,6 +1645,13 @@ async def api_order_delete(num: int):
         ledger_save(d)
         hf_sync_up()
     return JSONResponse({"ok": True})
+
+# ---------------- webshop-backend (echte orders + iDEAL + dashboard) ----------------
+# Router van shop_backend.py: publiek /shop/* (intent, checkout-formulier, order, pay,
+# statuspagina) + admin /api/shop/* (dashboard-data, acties, CSV-export). Orders landen
+# in dezelfde ledger-orders-lijst als de bot-agent gebruikt (source="webshop").
+from shop_backend import router as shop_router, shop_startup  # noqa: E402
+app.include_router(shop_router)
 
 # ---------------- whatsapp (Baileys-bridge) ----------------
 # De Node-bridge (whatsapp-bridge/bridge.js) koppelt het bestaande WhatsApp-nummer
