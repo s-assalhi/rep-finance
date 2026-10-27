@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>YZ Shop · Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23d7ff3f'/%3E%3Ctext x='16' y='22' font-size='16' font-weight='900' text-anchor='middle' font-family='sans-serif' fill='%23111'%3EY%3C/text%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0b0f0e; --paneel:#171a1b; --paneel2:#1d2122; --rand:#262b2c; --rand2:#33393a;
+  --tekst:#eef2f0; --sec:#9aa1ad; --accent:#d7ff3f; --accent-donker:#b9e02c;
+  --oranje:#f7941d; --rood:#ff5d5d;
+  --radius:12px; --schaduw:0 8px 30px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--tekst);font-family:system-ui,-apple-system,'Segoe UI',sans-serif;overflow-x:hidden}
+body{min-height:100vh;-webkit-font-smoothing:antialiased}
+::selection{background:var(--accent);color:#111}
+a{color:var(--accent);text-decoration:none}
+button{font-family:inherit}
+input{font-family:inherit}
+
+/* ---------- key-scherm ---------- */
+#keyScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+#keyScreen .doos{background:var(--paneel);border:1px solid var(--rand);border-radius:16px;
+  padding:32px 26px;max-width:380px;width:100%;text-align:center;box-shadow:var(--schaduw)}
+#keyScreen .teken{width:52px;height:52px;border-radius:14px;background:var(--accent);color:#111;
+  display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:900;margin:0 auto 16px}
+#keyScreen h1{font-size:1.25rem;font-weight:800}
+#keyScreen p{color:var(--sec);font-size:.88rem;margin:8px 0 18px;line-height:1.5}
+#keyInput{width:100%;background:var(--paneel2);border:1px solid var(--rand2);color:var(--tekst);
+  padding:12px 14px;border-radius:var(--radius);font-size:1rem;text-align:center;outline:none;letter-spacing:.08em}
+#keyInput:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(215,255,63,.12)}
+#keyKnop{width:100%;margin-top:12px;background:var(--accent);color:#111;border:none;border-radius:var(--radius);
+  padding:12px;font-weight:800;font-size:.95rem;cursor:pointer}
+#keyKnop:hover{background:var(--accent-donker)}
+#keyFout{color:var(--rood);font-size:.85rem;margin-top:12px;min-height:1.2em}
+
+/* ---------- layout ---------- */
+#app{display:none;min-height:100vh}
+#app.open{display:block}
+#sidebar{
+  position:fixed;top:0;left:0;bottom:0;width:212px;z-index:40;
+  background:var(--paneel);border-right:1px solid var(--rand);
+  display:flex;flex-direction:column;padding:18px 12px;
+}
+.merk{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.1rem;padding:2px 8px 16px}
+.merk .teken{width:34px;height:34px;border-radius:10px;background:var(--accent);color:#111;
+  display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:900;flex:0 0 auto}
+.merk em{font-style:normal;color:var(--accent)}
+.merk small{display:block;color:var(--sec);font-size:.68rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.navknop{
+  display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;color:var(--sec);
+  padding:11px 12px;border-radius:10px;font-size:.95rem;font-weight:600;cursor:pointer;text-align:left;
+  transition:background .12s,color .12s;
+}
+.navknop:hover{background:var(--paneel2);color:var(--tekst)}
+.navknop.actief{background:rgba(215,255,63,.12);color:var(--accent)}
+.navknop .icoon{font-size:1.05rem;width:22px;text-align:center}
+.navknop .teller{margin-left:auto;background:var(--paneel2);border:1px solid var(--rand2);color:var(--sec);
+  font-size:.7rem;font-weight:800;border-radius:999px;padding:1px 8px;min-width:22px;text-align:center}
+.navknop.actief .teller{background:var(--accent);color:#111;border-color:var(--accent)}
+#sideVoet{margin-top:auto;padding:10px 8px 2px;color:var(--sec);font-size:.72rem;line-height:1.5}
+#sideVoet .stip{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--sec);margin-right:6px}
+#sideVoet .stip.ok{background:var(--accent)}
+#sideVoet .stip.err{background:var(--rood)}
+
+#hoofd{padding:22px clamp(14px,3vw,32px) 60px;max-width:1180px;margin-left:212px}
+#topbar{display:none}
+
+/* mobiel: tab-balk onderaan */
+#tabbar{
+  display:none;position:fixed;left:0;right:0;bottom:0;z-index:40;
+  background:rgba(23,26,27,.97);backdrop-filter:blur(12px);border-top:1px solid var(--rand);
+  padding:6px 8px calc(6px + env(safe-area-inset-bottom));
+}
+#tabbar .tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:none;border:none;
+  color:var(--sec);font-size:.68rem;font-weight:700;padding:5px 0;cursor:pointer;border-radius:10px;
+}
+#tabbar .tab .icoon{font-size:1.25rem;line-height:1}
+#tabbar .tab.actief{color:var(--accent)}
+
+@media (max-width:880px){
+  #sidebar{display:none}
+  #hoofd{margin-left:0;padding:14px 12px 92px}
+  #topbar{
+    display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:30;
+    background:rgba(11,15,14,.95);backdrop-filter:blur(12px);border-bottom:1px solid var(--rand);
+    padding:12px 14px;margin:-14px -12px 14px;
+  }
+  #topbar .teken{width:30px;height:30px;border-radius:9px;background:var(--accent);color:#111;
+    display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:900}
+  #topbar b{font-size:1.02rem}
+  #topbar em{font-style:normal;color:var(--accent)}
+  #topbar .fris{margin-left:auto;color:var(--sec);background:var(--paneel);border:1px solid var(--rand);
+    border-radius:999px;width:36px;height:36px;font-size:1rem;cursor:pointer}
+  #topbar .fris:active{transform:rotate(90deg)}
+  #tabbar{display:flex}
+}
+
+/* ---------- koppen / kaartjes ---------- */
+.titel-blok{margin-bottom:16px}
+.titel-blok h1{font-size:clamp(1.3rem,4vw,1.7rem);font-weight:800;letter-spacing:-.02em}
+.titel-blok p{color:var(--sec);font-size:.85rem;margin-top:3px}
+
+.kaarten{display:grid;gap:12px;grid-template-columns:repeat(3,1fr)}
+@media (max-width:640px){.kaarten{grid-template-columns:repeat(2,1fr)}}
+.kaart{
+  background:var(--paneel);border:1px solid var(--rand);border-radius:var(--radius);
+  padding:14px 15px;box-shadow:0 4px 18px rgba(0,0,0,.25);min-width:0;
+}
+.kaart .label{color:var(--sec);font-size:.72rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kaart .waarde{font-size:clamp(1.25rem,4.5vw,1.7rem);font-weight:800;margin-top:5px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kaart .sub{color:var(--sec);font-size:.75rem;margin-top:3px}
+.kaart .waarde.limoen{color:var(--accent)}
+.kaart .waarde.ooranje{color:var(--oranje)}
+
+.panel{background:var(--paneel);border:1px solid var(--rand);border-radius:var(--radius);
+  padding:16px;margin-top:16px;box-shadow:0 4px 18px rgba(0,0,0,.25);min-width:0}
+.panel h2{font-size:.95rem;font-weight:800;margin-bottom:12px}
+.panel h2 small{color:var(--sec);font-weight:600;font-size:.75rem;margin-left:6px}
+
+/* ---------- grafiek ---------- */
+#grafiekWrap{width:100%;overflow:hidden}
+#grafiekWrap svg{display:block;width:100%;height:auto}
+.bar{fill:var(--accent);cursor:pointer}
+.bar:hover{fill:var(--accent-donker)}
+.g-label{fill:var(--sec);font-size:10px;font-weight:600}
+.g-as{stroke:var(--rand2);stroke-width:1}
+.g-net{stroke:rgba(255,255,255,.05);stroke-width:1}
+
+/* ---------- top producten ---------- */
+.toplijst{display:flex;flex-direction:column}
+.top-rij{display:flex;align-items:center;gap:10px;padding:9px 2px;border-top:1px solid var(--rand);font-size:.88rem;min-width:0}
+.top-rij:first-child{border-top:none}
+.top-rij .nr{width:22px;height:22px;border-radius:7px;background:var(--paneel2);border:1px solid var(--rand2);
+  color:var(--sec);font-size:.7rem;font-weight:800;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.top-rij:first-child .nr{background:var(--accent);color:#111;border-color:var(--accent)}
+.top-rij .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.top-rij .qt{color:var(--sec);font-size:.78rem;white-space:nowrap}
+.top-rij .om{font-weight:800;color:var(--accent);white-space:nowrap}
+
+/* ---------- orders: toolbar ---------- */
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 12px}
+#zoek{
+  flex:1;min-width:180px;max-width:420px;background:var(--paneel);border:1px solid var(--rand);color:var(--tekst);
+  padding:10px 14px;border-radius:var(--radius);font-size:.92rem;outline:none;
+}
+#zoek:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(215,255,63,.12)}
+#zoek::placeholder{color:#6d7572}
+.exportknop{
+  background:var(--paneel);border:1px solid var(--rand);color:var(--tekst);padding:10px 14px;
+  border-radius:var(--radius);font-size:.85rem;font-weight:600;cursor:pointer;white-space:nowrap;
+  transition:border-color .12s;
+}
+.exportknop:hover{border-color:var(--accent)}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+.chip{
+  background:var(--paneel);border:1px solid var(--rand);color:var(--sec);padding:7px 14px;
+  border-radius:999px;font-size:.82rem;font-weight:600;cursor:pointer;transition:all .12s;
+}
+.chip:hover{color:var(--tekst);border-color:var(--rand2)}
+.chip.actief{background:var(--accent);color:#111;border-color:var(--accent);font-weight:800}
+.chip .n{opacity:.75;font-weight:700;margin-left:3px}
+
+/* ---------- orders tabel (desktop) ---------- */
+.tabelwrap{background:var(--paneel);border:1px solid var(--rand);border-radius:var(--radius);overflow:auto;
+  box-shadow:0 4px 18px rgba(0,0,0,.25)}
+table{width:100%;border-collapse:collapse;font-size:.88rem;min-width:760px}
+th{color:var(--sec);font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  text-align:left;padding:11px 12px;border-bottom:1px solid var(--rand);white-space:nowrap}
+td{padding:11px 12px;border-bottom:1px solid rgba(38,43,44,.6);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tbody tr{cursor:pointer;transition:background .1s}
+tbody tr:hover{background:var(--paneel2)}
+td .num{font-weight:800;color:var(--accent);white-space:nowrap}
+td .datum{color:var(--sec);font-size:.8rem;white-space:nowrap}
+td .klant{font-weight:600;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td .items{color:var(--sec);font-size:.8rem;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td .totaal{font-weight:800;white-space:nowrap}
+
+/* ---------- badges / chips ---------- */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;
+  font-size:.72rem;font-weight:800;white-space:nowrap}
+.badge.wacht{background:#2a2f30;color:var(--sec);border:1px solid var(--rand2)}
+.badge.gestart{background:rgba(247,148,29,.15);color:var(--oranje);border:1px solid rgba(247,148,29,.4)}
+.badge.betaald{background:rgba(215,255,63,.14);color:var(--accent);border:1px solid rgba(215,255,63,.45)}
+.statuschip{display:inline-block;padding:4px 10px;border-radius:999px;background:var(--paneel2);
+  border:1px solid var(--rand2);color:var(--sec);font-size:.72rem;font-weight:700;white-space:nowrap}
+.statuschip.geen_interesse{color:var(--rood);border-color:rgba(255,93,93,.4)}
+
+/* ---------- orders: kaartjes (mobiel) ---------- */
+.mkaarten{display:none;flex-direction:column;gap:10px}
+.mkaart{background:var(--paneel);border:1px solid var(--rand);border-radius:var(--radius);
+  padding:13px 14px;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.25);min-width:0}
+.mkaart:active{background:var(--paneel2)}
+.mkaart .rij1{display:flex;align-items:center;gap:8px}
+.mkaart .rij1 .num{font-weight:800;color:var(--accent);font-size:.95rem}
+.mkaart .rij1 .datum{color:var(--sec);font-size:.75rem;margin-left:auto}
+.mkaart .rij2{display:flex;align-items:center;gap:8px;margin-top:7px}
+.mkaart .rij2 .klant{font-weight:700;font-size:.95rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mkaart .rij3{color:var(--sec);font-size:.8rem;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mkaart .rij4{display:flex;align-items:center;gap:8px;margin-top:9px}
+.mkaart .rij4 .totaal{font-weight:800}
+.mkaart .rij4 .rechts{margin-left:auto;display:flex;gap:6px;align-items:center}
+
+@media (max-width:640px){
+  .tabelwrap{display:none}
+  .mkaarten{display:flex}
+}
+
+/* ---------- klanten ---------- */
+.kl-mobiel{display:none;flex-direction:column;gap:10px}
+@media (max-width:640px){
+  .kl-mobiel{display:flex}
+  .tabelwrap.kl{display:none}
+}
+.kl-kaart{background:var(--paneel);border:1px solid var(--rand);border-radius:var(--radius);padding:13px 14px;min-width:0}
+.kl-kaart .r1{display:flex;align-items:center;gap:8px}
+.kl-kaart .r1 b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kl-kaart .r2{color:var(--sec);font-size:.82rem;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kl-kaart .r3{display:flex;gap:12px;margin-top:7px;color:var(--sec);font-size:.8rem;flex-wrap:wrap}
+.kl-kaart .r3 b{color:var(--tekst)}
+td a.mail{word-break:break-all}
+
+/* ---------- drawer ---------- */
+#backdrop{position:fixed;inset:0;z-index:60;background:rgba(5,8,7,.65);backdrop-filter:blur(3px);
+  opacity:0;pointer-events:none;transition:opacity .18s}
+#backdrop.open{opacity:1;pointer-events:auto}
+#drawer{
+  position:fixed;top:0;right:0;bottom:0;z-index:61;width:min(440px,100%);
+  background:var(--paneel);border-left:1px solid var(--rand2);
+  transform:translateX(105%);transition:transform .22s ease;display:flex;flex-direction:column;
+  box-shadow:-12px 0 40px rgba(0,0,0,.5);
+}
+#drawer.open{transform:translateX(0)}
+#drawer .kop{display:flex;align-items:center;gap:10px;padding:16px 16px 12px;border-bottom:1px solid var(--rand)}
+#drawer .kop .num{font-size:1.05rem;font-weight:800;color:var(--accent)}
+#drawer .kop .sluit{margin-left:auto;background:var(--paneel2);border:1px solid var(--rand2);color:var(--sec);
+  width:34px;height:34px;border-radius:10px;font-size:1rem;cursor:pointer;flex:0 0 auto}
+#drawer .kop .sluit:hover{color:var(--tekst);border-color:var(--accent)}
+#drawer .lijf{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px;-webkit-overflow-scrolling:touch}
+.dsec{background:var(--paneel2);border:1px solid var(--rand);border-radius:var(--radius);padding:13px 14px}
+.dsec .dlabel{color:var(--sec);font-size:.68rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;margin-bottom:7px}
+.dsec .dnaam{font-weight:700;font-size:1rem}
+.dsec .dregel{color:var(--sec);font-size:.85rem;margin-top:3px;word-break:break-word}
+.dsec .dregel a{word-break:break-all}
+.ditem{display:flex;gap:8px;align-items:baseline;padding:7px 0;border-top:1px solid var(--rand);font-size:.88rem}
+.ditem:first-of-type{border-top:none;padding-top:0}
+.ditem .t{flex:1;min-width:0;font-weight:600}
+.ditem .q{color:var(--sec);font-size:.8rem;white-space:nowrap}
+.ditem .p{font-weight:700;white-space:nowrap}
+.dtotaal{display:flex;justify-content:space-between;padding-top:10px;margin-top:4px;border-top:2px solid var(--rand2);font-weight:800;font-size:1rem}
+.dtotaal .b{color:var(--accent)}
+.hintbox{background:rgba(247,148,29,.12);border:1px solid rgba(247,148,29,.45);color:var(--oranje);
+  border-radius:var(--radius);padding:11px 13px;font-size:.84rem;font-weight:600;line-height:1.45}
+.notitie{background:var(--paneel2);border:1px solid var(--rand);border-radius:var(--radius);padding:11px 13px;
+  font-size:.88rem;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+#drawer .acties{border-top:1px solid var(--rand);padding:12px 16px calc(14px + env(safe-area-inset-bottom));
+  display:grid;grid-template-columns:1fr 1fr;gap:8px;background:var(--paneel)}
+.aknop{
+  background:var(--paneel2);border:1px solid var(--rand2);color:var(--tekst);padding:11px 8px;
+  border-radius:10px;font-size:.84rem;font-weight:700;cursor:pointer;transition:all .12s;
+  display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
+}
+.aknop:hover{border-color:var(--accent)}
+.aknop.hoofd{background:var(--accent);color:#111;border-color:var(--accent)}
+.aknop.hoofd:hover{background:var(--accent-donker)}
+.aknop.gevaar{color:var(--rood);border-color:rgba(255,93,93,.35)}
+.aknop.gevaar:hover{border-color:var(--rood)}
+.aknop:disabled{opacity:.45;cursor:wait}
+.aknop.breed{grid-column:1/-1}
+
+/* ---------- states ---------- */
+.melding{text-align:center;color:var(--sec);padding:44px 16px;font-size:.92rem;line-height:1.6}
+.melding .groot{font-size:2rem;display:block;margin-bottom:10px}
+.melding button{margin-top:12px;background:var(--accent);color:#111;border:none;border-radius:10px;
+  padding:10px 22px;font-weight:800;cursor:pointer;font-size:.88rem}
+.melding.fout{color:var(--rood)}
+.leeg{color:var(--sec);text-align:center;padding:30px 10px;font-size:.88rem}
+
+/* ---------- toast ---------- */
+#toast{
+  position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
+  z-index:80;background:#22272a;border:1px solid var(--rand2);color:var(--tekst);border-radius:12px;
+  padding:11px 18px;font-size:.88rem;font-weight:600;box-shadow:var(--schaduw);
+  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;max-width:90vw;text-align:center;
+}
+#toast.open{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.ok{border-color:rgba(215,255,63,.5)}
+#toast.err{border-color:rgba(255,93,93,.55)}
+@media (min-width:881px){#toast{bottom:28px}}
+
+/* draai-knopje */
+@keyframes draai{to{transform:rotate(360deg)}}
+.draaien{animation:draai .8s linear infinite;display:inline-block}
+</style>
+</head>
+<body>
+
+<!-- ---------- toegangscode ---------- -->
+<div id="keyScreen" style="display:none">
+  <div class="doos">
+    <div class="teken">Y</div>
+    <h1>YZ Shop Dashboard</h1>
+    <p>Voer de toegangscode in (staat normaal in de link als <b>?key=…</b>).</p>
+    <input id="keyInput" type="password" inputmode="text" autocomplete="off" placeholder="toegangscode">
+    <button id="keyKnop">Open dashboard</button>
+    <div id="keyFout"></div>
+  </div>
+</div>
+
+<!-- ---------- app ---------- -->
+<div id="app">
+  <aside id="sidebar">
+    <div class="merk">
+      <div class="teken">Y</div>
+      <div><small>YZ Shop</small><em>Dashboard</em></div>
+    </div>
+    <button class="navknop actief" data-tab="overzicht"><span class="icoon">🏠</span>Overzicht<span class="teller" id="tOverzicht" style="display:none"></span></button>
+    <button class="navknop" data-tab="orders"><span class="icoon">📦</span>Orders<span class="teller" id="tOrders" style="display:none"></span></button>
+    <button class="navknop" data-tab="klanten"><span class="icoon">👥</span>Klanten<span class="teller" id="tKlanten" style="display:none"></span></button>
+    <div id="sideVoet"><span class="stip" id="voetStip"></span><span id="voetTekst">verbinden…</span></div>
+  </aside>
+
+  <div id="topbar">
+    <div class="teken">Y</div>
+    <b>YZ Shop <em>· Dashboard</em></b>
+    <button class="fris" id="frisKnop" title="Verversen">⟳</button>
+  </div>
+
+  <main id="hoofd">
+    <section id="tab-overzicht">
+      <div class="titel-blok"><h1>Overzicht</h1><p id="ovSub">—</p></div>
+      <div id="ovInhoud"></div>
+    </section>
+
+    <section id="tab-orders" style="display:none">
+      <div class="titel-blok"><h1>Orders</h1><p id="ordSub">—</p></div>
+      <div class="toolbar">
+        <input id="zoek" type="search" placeholder="Zoek op naam, e-mail of ordernummer…" autocomplete="off">
+      </div>
+      <div class="chips" id="filterChips"></div>
+      <div id="ordInhoud"></div>
+    </section>
+
+    <section id="tab-klanten" style="display:none">
+      <div class="titel-blok"><h1>Klanten</h1><p id="klSub">—</p></div>
+      <div id="klInhoud"></div>
+    </section>
+  </main>
+
+  <nav id="tabbar">
+    <button class="tab actief" data-tab="overzicht"><span class="icoon">🏠</span>Overzicht</button>
+    <button class="tab" data-tab="orders"><span class="icoon">📦</span>Orders</button>
+    <button class="tab" data-tab="klanten"><span class="icoon">👥</span>Klanten</button>
+  </nav>
+</div>
+
+<div id="backdrop"></div>
+<aside id="drawer" aria-hidden="true">
+  <div class="kop">
+    <span class="num" id="dNum">#—</span>
+    <span id="dBadges" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+    <button class="sluit" id="dSluit" aria-label="Sluiten">✕</button>
+  </div>
+  <div class="lijf" id="dLijf"></div>
+  <div class="acties" id="dActies"></div>
+</aside>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ================= basis ================= */
+var QS = new URLSearchParams(location.search);
+var DEMO = QS.get("demo") === "1";
+var LS_KEY = "yz_dash_key";
+var state = {
+  tab: "overzicht", key: null, data: null,
+  zoek: "", filter: "alle", drawerNum: null,
+  laden: false, actieBezig: false, laatsteLading: 0, fout: null
+};
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? "" : s)
+  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+function fmtEuro(v){
+  var n = Number(v) || 0;
+  var opt = Number.isInteger(n) ? {} : {minimumFractionDigits:2, maximumFractionDigits:2};
+  return "\u20AC" + n.toLocaleString("nl-NL", opt);
+}
+var MAANDEN = ["jan","feb","mrt","apr","mei","jun","jul","aug","sep","okt","nov","dec"];
+var DAGEN = ["zo","ma","di","wo","do","vr","za"];
+function parseDatum(s){ // "2026-10-27 22:12:34" -> Date (lokaal)
+  if(!s) return null;
+  var m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(s));
+  if(!m) return null;
+  return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0));
+}
+function fmtKort(s){ var d = parseDatum(s); if(!d) return String(s||"—");
+  return ("0"+d.getDate()).slice(-2)+"-"+MAANDEN[d.getMonth()]+" "+("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2); }
+function fmtLang(s){ var d = parseDatum(s); if(!d) return String(s||"—");
+  return DAGEN[d.getDay()]+" "+("0"+d.getDate()).slice(-2)+" "+MAANDEN[d.getMonth()]+" "+d.getFullYear()+", "+("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2); }
+
+var BETAAL_LABEL = {wacht:"⏳ wacht", gestart:"💳 gestart", betaald:"✅ betaald"};
+var STATUS_LABEL = {interesse:"interesse", info_gevraagd:"info gevraagd", prijs_gegeven:"prijs gegeven",
+  wacht_op_antwoord:"wacht op antwoord", te_bestellen:"te bestellen", besteld:"besteld",
+  onderweg:"onderweg", binnen:"binnen", verpakken:"verpakken", klaar:"klaar",
+  geen_interesse:"geannuleerd"};
+
+function betaalBadge(st){
+  var s = String(st||"wacht");
+  var kl = s === "betaald" ? "betaald" : (s === "gestart" ? "gestart" : "wacht");
+  return '<span class="badge '+kl+'">'+esc(BETAAL_LABEL[s]||s)+'</span>';
+}
+function statusChip(st){
+  var s = String(st||"—");
+  var lab = STATUS_LABEL[s] || s.replace(/_/g," ");
+  return '<span class="statuschip'+(s==="geen_interesse"?" geen_interesse":"")+'">'+esc(lab||"—")+'</span>';
+}
+function adresTekst(a){
+  if(!a) return "";
+  var s = [((a.straat||"")+" "+(a.huisnr||"")).trim(), [a.postcode, a.plaats].filter(Boolean).join(" ")]
+    .filter(Boolean).join(", ");
+  if(a.land && a.land !== "NL") s += " ("+a.land+")";
+  return s;
+}
+
+/* ================= toast ================= */
+var toastTimer = null;
+function toast(msg, soort){
+  var t = $("toast");
+  t.textContent = msg;
+  t.className = "open " + (soort || "ok");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.className = ""; }, 2600);
+}
+
+/* ================= demo-data ================= */
+function demoData(){
+  var nu = new Date();
+  function dag(ts){ var d = new Date(nu.getTime() - ts*86400000);
+    return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2); }
+  function tstamp(dagTerug, h, m){ var d = new Date(nu.getTime() - dagTerug*86400000);
+    d.setHours(h, m, 12, 0);
+    return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2)
+      +" "+("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2)+":12"; }
+  var orders = [
+    { num: 1014, created: tstamp(0, 20, 41), updated: tstamp(0, 20, 41),
+      naam: "Sami B.", email: "sami.b@example.com", telefoon: "+31 6 12345678",
+      adres: {straat:"Kerkstraat", huisnr:"12B", postcode:"1017 GV", plaats:"Amsterdam", land:"NL"},
+      items: [{id:"p12", titel:"Alo Schoenen wit", prijs:109, qty:1}],
+      totaal: 109, betaal_status: "wacht", order_status: "te_bestellen",
+      marketing: true, notitie: "Maat 44 alsjeblieft"},
+    { num: 1013, created: tstamp(1, 18, 3), updated: tstamp(1, 19, 10),
+      naam: "Jayden K.", email: "jayden.k@example.com", telefoon: "+31 6 87654321",
+      adres: {straat:"Dorpsstraat", huisnr:"8", postcode:"2132 XA", plaats:"Hoofddorp", land:"NL"},
+      items: [{id:"p03", titel:"Essentials Hoodie grijs", prijs:65, qty:1}],
+      totaal: 65, betaal_status: "gestart", order_status: "te_bestellen",
+      marketing: false, notitie: "", vermoed_betaald: tstamp(1, 19, 9) },
+    { num: 1012, created: tstamp(3, 15, 27), updated: tstamp(2, 11, 5),
+      naam: "Noah V.", email: "noah.v@example.com", telefoon: "+31 6 24681357",
+      adres: {straat:"Lindelaan", huisnr:"101", postcode:"2012 VK", plaats:"Haarlem", land:"NL"},
+      items: [{id:"p07", titel:"Ajax Set thuis 24/25", prijs:40, qty:1},
+              {id:"p08", titel:"Ajax Shirt uit 24/25", prijs:30, qty:1}],
+      totaal: 70, betaal_status: "betaald", order_status: "besteld",
+      marketing: true, notitie: "Rugnummer 10, naam NOAH — setje maat M" }
+  ];
+  var klanten = [
+    { email:"noah.v@example.com", naam:"Noah V.", telefoon:"+31 6 24681357",
+      adres:orders[2].adres, aantal_orders:2, totaal_besteed:135, marketing:true, laatste:tstamp(1, 18, 3) },
+    { email:"sami.b@example.com", naam:"Sami B.", telefoon:"+31 6 12345678",
+      adres:orders[0].adres, aantal_orders:1, totaal_besteed:109, marketing:true, laatste:tstamp(0, 20, 41) }
+  ];
+  var per_dag = [];
+  for(var i=13;i>=0;i--){
+    per_dag.push({ dag: dag(i), omzet_betaald: 0, orders: 0 });
+  }
+  per_dag[10] = {dag: dag(3), omzet_betaald: 70, orders: 1};          // #1012 betaald
+  per_dag[12] = {dag: dag(1), omzet_betaald: 0, orders: 1};           // #1013 gestart
+  per_dag[13] = {dag: dag(0), omzet_betaald: 0, orders: 1};           // #1014 wacht
+  return { ok:true, demo:true, orders:orders, klanten_flag:true, customers:klanten,
+    analytics:{ omzet_betaald:70, omzet_open:174, aantal_orders:3, gem_orderwaarde:81.33,
+      betaald_pct:33.3, per_dag:per_dag,
+      top_producten:[
+        {titel:"Ajax Set thuis 24/25", qty:1, omzet:40},
+        {titel:"Ajax Shirt uit 24/25", qty:1, omzet:30},
+        {titel:"Essentials Hoodie grijs", qty:1, omzet:65},
+        {titel:"Alo Schoenen wit", qty:1, omzet:109}
+      ],
+      aantal_klanten:2, marketing_emails:2 } };
+}
+
+/* ================= data laden ================= */
+function apiPad(p){
+  return p + (p.indexOf("?") >= 0 ? "&" : "?") + "key=" + encodeURIComponent(state.key);
+}
+function toonKeyFout(msg){ $("keyFout").textContent = msg || ""; }
+
+function startKeyScherm(){
+  $("keyScreen").style.display = "flex";
+  $("app").className = "";
+  $("keyKnop").onclick = probeerKey;
+  $("keyInput").onkeydown = function(e){ if(e.key === "Enter") probeerKey(); };
+  $("keyInput").focus();
+}
+function probeerKey(){
+  var k = $("keyInput").value.trim();
+  if(!k){ toonKeyFout("Vul eerst de code in."); return; }
+  $("keyKnop").disabled = true;
+  state.key = k;
+  fetch(apiPad("/api/shop/data"))
+    .then(function(r){ return r.json().then(function(j){ return {status:r.status, j:j}; }); })
+    .then(function(res){
+      $("keyKnop").disabled = false;
+      if(res.status === 401 || !res.j || res.j.ok === false){
+        toonKeyFout(res.j && res.j.error ? "Code klopt niet." : "Code klopt niet — probeer opnieuw.");
+        return;
+      }
+      try{ localStorage.setItem(LS_KEY, k); }catch(e){}
+      $("keyScreen").style.display = "none";
+      state.data = res.j; state.fout = null; state.laatsteLading = Date.now();
+      openApp();
+    })
+    .catch(function(){ $("keyKnop").disabled = false; toonKeyFout("Server niet bereikbaar — probeer opnieuw."); });
+}
+
+function laad(silent){
+  if(state.laden) return Promise.resolve();
+  state.laden = true;
+  if(!silent) zetVoet("laden…", "");
+  return fetch(apiPad("/api/shop/data"))
+    .then(function(r){ return r.json().then(function(j){ return {status:r.status, j:j}; }, function(){ return {status:r.status, j:null}; }); })
+    .then(function(res){
+      state.laden = false;
+      if(res.status === 401 || (res.j && res.j.ok === false && res.status === 401)){
+        // code versleten -> opnieuw vragen
+        try{ localStorage.removeItem(LS_KEY); }catch(e){}
+        state.key = null;
+        startKeyScherm();
+        toonKeyFout("Sessie verlopen — voer de code opnieuw in.");
+        return;
+      }
+      if(!res.j || res.j.ok !== true) throw new Error((res.j && res.j.error) || ("HTTP "+res.status));
+      state.data = res.j; state.fout = null; state.laatsteLading = Date.now();
+      zetVoet("live · laatst " + new Date().toLocaleTimeString("nl-NL",{hour:"2-digit",minute:"2-digit"}), "ok");
+      renderAlles();
+    })
+    .catch(function(e){
+      state.laden = false;
+      state.fout = String(e && e.message || e);
+      zetVoet("fout: " + state.fout, "err");
+      if(!state.data || silent !== true) renderAlles(); // met data gewoon oude stand houden
+    });
+}
+
+function zetVoet(tekst, soort){
+  var s = $("voetStip"); if(!s) return;
+  s.className = "stip" + (soort ? " " + soort : "");
+  $("voetTekst").textContent = tekst;
+}
+
+/* ================= app-start ================= */
+function openApp(){
+  $("app").className = "open";
+  if(DEMO){ zetVoet("demo-modus", "ok"); renderAlles(); }
+  else laad(false);
+  if(!DEMO && !window.__autoRef){
+    window.__autoRef = setInterval(function(){
+      if(document.visibilityState === "visible" && !state.actieBezig && Date.now() - state.laatsteLading > 28000) laad(true);
+    }, 30000);
+    document.addEventListener("visibilitychange", function(){
+      if(document.visibilityState === "visible" && !DEMO && Date.now() - state.laatsteLading > 15000 && !state.actieBezig) laad(true);
+    });
+  }
+}
+
+/* ================= tabs ================= */
+function zetTab(tab){
+  state.tab = tab;
+  sluitDrawer();
+  ["overzicht","orders","klanten"].forEach(function(t){
+    $("tab-" + t).style.display = t === tab ? "" : "none";
+  });
+  document.querySelectorAll(".navknop,.tab").forEach(function(b){
+    b.className = b.className.replace(/ ?actief/g, "") + (b.dataset.tab === tab ? " actief" : "");
+  });
+  window.scrollTo(0,0);
+}
+document.querySelectorAll(".navknop,.tab").forEach(function(b){
+  b.addEventListener("click", function(){ zetTab(b.dataset.tab); });
+});
+$("frisKnop").addEventListener("click", function(){
+  var knop = this;
+  knop.classList.remove("draaien"); void knop.offsetWidth; knop.classList.add("draaien");
+  setTimeout(function(){ knop.classList.remove("draaien"); }, 850);
+  if(DEMO){ toast("Demo-modus — niets te verversen"); return; }
+  laad(true);
+});
+
+/* ================= render-alles ================= */
+function renderAlles(){
+  var d = state.data;
+  if(!d){
+    $("ovInhoud").innerHTML = foutMelding();
+    $("ovSub").textContent = "—";
+    $("ordInhoud").innerHTML = ""; $("klInhoud").innerHTML = ""; 
+    renderChips();
+    renderTellers();
+    return;
+  }
+  var a = d.analytics || {};
+  $("ovSub").textContent = DEMO ? "Demo-modus — voorbeelddata" :
+    (a.aantal_orders ? a.aantal_orders + " webshop-orders" : "nog geen webshop-orders");
+  renderOverzicht(a);
+  renderOrders();
+  renderKlanten();
+  renderTellers();
+}
+function foutMelding(){
+  return '<div class="melding fout"><span class="groot">⚠️</span>Laden mislukt<br><span style="color:var(--sec)">'+esc(state.fout||"onbekend")+'</span><br><button onclick="window.__herlaad()">Opnieuw proberen</button></div>';
+}
+window.__herlaad = function(){ if(DEMO){ renderAlles(); return; } laad(false); };
+
+function renderTellers(){
+  var d = state.data;
+  var nOrders = d && d.orders ? d.orders.length : 0;
+  var nKl = d && d.customers ? d.customers.length : 0;
+  var a = (d && d.analytics) || {};
+  zetTeller("tOverzicht", null);
+  zetTeller("tOrders", nOrders || null);
+  zetTeller("tKlanten", nKl || null);
+  $("ordSub").textContent = d ? (nOrders + " orders" + (a.aantal_orders && a.aantal_orders !== nOrders ? " (" + a.aantal_orders + " totaal)" : "")) : "—";
+  $("klSub").textContent = d ? nKl + " klanten" : "—";
+}
+function zetTeller(id, n){
+  var el = $(id);
+  if(n == null){ el.style.display = "none"; return; }
+  el.textContent = n; el.style.display = "";
+}
+
+/* ================= overzicht ================= */
+function renderOverzicht(a){
+  var inh = $("ovInhoud");
+  if(state.fout && !state.data){ inh.innerHTML = foutMelding(); return; }
+  var openRij = a.aantal_orders ? Math.round((a.aantal_orders * ((a.betaald_pct||0)/100))) : 0;
+  var openN = a.aantal_orders ? (a.aantal_orders - openRij) : 0;
+  var kaarten =
+    '<div class="kaarten">' +
+      '<div class="kaart"><div class="label">Omzet betaald</div><div class="waarde limoen">'+fmtEuro(a.omzet_betaald)+'</div><div class="sub">via iDEAL bevestigd</div></div>' +
+      '<div class="kaart"><div class="label">Openstaand</div><div class="waarde'+((a.omzet_open||0)>0?' ooranje':'')+'">'+fmtEuro(a.omzet_open)+'</div><div class="sub">'+openN+' order'+(openN===1?"":"s")+' niet betaald</div></div>' +
+      '<div class="kaart"><div class="label">Orders</div><div class="waarde">'+(a.aantal_orders||0)+'</div><div class="sub">'+(a.betaald_pct||0)+'% betaald</div></div>' +
+      '<div class="kaart"><div class="label">Gem. orderwaarde</div><div class="waarde">'+fmtEuro(a.gem_orderwaarde)+'</div><div class="sub">alles meegerekend</div></div>' +
+      '<div class="kaart"><div class="label">Klanten</div><div class="waarde">'+(a.aantal_klanten||0)+'</div><div class="sub">unieke e-mails</div></div>' +
+      '<div class="kaart"><div class="label">E-mails</div><div class="waarde">'+(a.marketing_emails||0)+'<span style="color:var(--sec);font-size:.65em">/'+(a.aantal_klanten||0)+'</span></div><div class="sub">marketing ✓</div></div>' +
+    '</div>';
+  inh.innerHTML = kaarten +
+    '<div class="panel"><h2>Omzet per dag <small>laatste 14 dagen</small></h2><div id="grafiekWrap">'+grafiekSvg(a.per_dag||[])+'</div></div>' +
+    '<div class="panel"><h2>Top producten <small>op aantal verkocht</small></h2>' + topProducten(a.top_producten||[]) + '</div>';
+}
+function topProducten(top){
+  if(!top.length) return '<div class="leeg">Nog geen producten verkocht.</div>';
+  var rijen = top.map(function(p,i){
+    return '<div class="top-rij"><span class="nr">'+(i+1)+'</span><span class="nm">'+esc(p.titel)+'</span><span class="qt">×'+p.qty+'</span><span class="om">'+fmtEuro(p.omzet)+'</span></div>';
+  }).join("");
+  return '<div class="toplijst">'+rijen+'</div>';
+}
+
+/* grafiek: inline SVG, balken in limoen, dag-labels, title-tooltip */
+function grafiekSvg(perDag){
+  var wrap = $("grafiekWrap");
+  var W = Math.max(300, (wrap && wrap.clientWidth) || 640);
+  if(!perDag.length) return '<div class="leeg">Nog geen data.</div>';
+  var H = 190, top = 14, bod = 168, plotH = bod - top;
+  var padL = 8, padR = 8;
+  var n = perDag.length;
+  var stap = (W - padL - padR) / n;
+  var bw = Math.max(6, Math.min(34, stap * 0.58));
+  var max = 0;
+  perDag.forEach(function(r){ var v = Number(r.omzet_betaald != null ? r.omzet_betaald : r.omzet) || 0; if(v > max) max = v; });
+  var stappen = 2;
+  if(max > 0){
+    stappen = Math.max(2, Math.min(4, Math.ceil(max / 40)));
+    max = stappen * Math.ceil(max / stappen);
+  }
+  var svg = '<svg viewBox="0 0 '+W+' '+H+'" width="'+W+'" height="'+H+'" role="img" aria-label="Omzet per dag">';
+  // rasterlijnen + as-labels
+  for(var g=1; g<=stappen; g++){
+    var gy = bod - plotH * (g/stappen);
+    svg += '<line class="g-net" x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+gy.toFixed(1)+'"/>';
+    svg += '<text class="g-label" x="'+(W-padR)+'" y="'+(gy-3).toFixed(1)+'" text-anchor="end" font-size="8">'+Math.round(max*g/stappen)+'</text>';
+  }
+  svg += '<line class="g-as" x1="'+padL+'" y1="'+bod+'" x2="'+(W-padR)+'" y2="'+bod+'"/>';
+  perDag.forEach(function(r,i){
+    var v = Number(r.omzet_betaald != null ? r.omzet_betaald : r.omzet) || 0;
+    var d = parseDatum(r.dag);
+    var cx = padL + stap*i + stap/2;
+    var h = max > 0 ? Math.max(v > 0 ? 4 : 0, plotH * v/max) : 0;
+    var y = bod - h;
+    var tip = (d ? DAGEN[d.getDay()]+" "+("0"+d.getDate()).slice(-2)+"-"+("0"+(d.getMonth()+1)).slice(-2) : r.dag)
+      + ": " + fmtEuro(v) + " · " + (r.orders||0) + " order"+((r.orders||0)===1?"":"s");
+    if(h > 0){
+      svg += '<rect class="bar" x="'+(cx-bw/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="3"><title>'+esc(tip)+'</title></rect>';
+    } else {
+      svg += '<rect x="'+(cx-bw/2).toFixed(1)+'" y="'+(bod-2)+'" width="'+bw.toFixed(1)+'" height="2" rx="1" fill="#262b2c"><title>'+esc(tip)+'</title></rect>';
+    }
+    var label = d ? ("0"+d.getDate()).slice(-2) : "";
+    svg += '<text class="g-label" x="'+cx.toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle">'+esc(label)+'</text>';
+  });
+  svg += '</svg>';
+  return svg;
+}
+
+/* ================= orders ================= */
+function gefilterdeOrders(){
+  var d = state.data;
+  if(!d) return [];
+  var z = state.zoek.trim().toLowerCase();
+  return (d.orders||[]).filter(function(o){
+    if(state.filter !== "alle" && String(o.betaal_status||"wacht") !== state.filter) return false;
+    if(!z) return true;
+    if(String(o.num||"").indexOf(z) >= 0) return true;
+    if(String(o.naam||"").toLowerCase().indexOf(z) >= 0) return true;
+    if(String(o.email||"").toLowerCase().indexOf(z) >= 0) return true;
+    return false;
+  });
+}
+function renderOrders(){
+  var inh = $("ordInhoud");
+  if(state.fout && !state.data){ inh.innerHTML = foutMelding(); return; }
+  renderChips();
+  var lijst = gefilterdeOrders();
+  if(!lijst.length){
+    inh.innerHTML = '<div class="melding"><span class="groot">📦</span>' +
+      (state.zoek || state.filter !== "alle" ? "Niets gevonden voor deze zoek/filter." : "Nog geen webshop-orders.") + '</div>';
+    return;
+  }
+  var rows = lijst.map(function(o){
+    var itemsKort = (o.items||[]).map(function(it){ return it.titel + (it.qty>1 ? " ×"+it.qty : ""); }).join(", ");
+    var vbg = vermoed(o) ? ' <span title="vermoed betaald" style="color:var(--oranje)">◉</span>' : "";
+    return { o:o, itemsKort:itemsKort, vbg:vbg };
+  });
+  var tabel = '<div class="tabelwrap"><table><thead><tr>' +
+    '<th>#</th><th>Datum</th><th>Klant</th><th>Items</th><th>Totaal</th><th>Betaling</th><th>Status</th>' +
+    '</tr></thead><tbody>' +
+    rows.map(function(r){
+      return '<tr data-num="'+r.o.num+'"><td><span class="num">#'+esc(r.o.num)+'</span>'+r.vbg+'</td>' +
+        '<td><span class="datum">'+esc(fmtKort(r.o.created))+'</span></td>' +
+        '<td><span class="klant">'+esc(r.o.naam||"—")+'</span></td>' +
+        '<td><span class="items" title="'+esc(r.itemsKort)+'">'+esc(r.itemsKort||"—")+'</span></td>' +
+        '<td><span class="totaal">'+fmtEuro(r.o.totaal)+'</span></td>' +
+        '<td>'+betaalBadge(r.o.betaal_status)+'</td>' +
+        '<td>'+statusChip(r.o.order_status)+'</td></tr>';
+    }).join("") +
+    '</tbody></table></div>';
+  var kaarten = '<div class="mkaarten">' + rows.map(function(r){
+    return '<div class="mkaart" data-num="'+r.o.num+'">' +
+      '<div class="rij1"><span class="num">#'+esc(r.o.num)+'</span>'+r.vbg+'<span class="datum">'+esc(fmtKort(r.o.created))+'</span></div>' +
+      '<div class="rij2"><span class="klant">'+esc(r.o.naam||"—")+'</span></div>' +
+      '<div class="rij3">'+esc(r.itemsKort||"—")+'</div>' +
+      '<div class="rij4"><span class="totaal">'+fmtEuro(r.o.totaal)+'</span><span class="rechts">'+betaalBadge(r.o.betaal_status)+statusChip(r.o.order_status)+'</span></div>' +
+      '</div>';
+  }).join("") + '</div>';
+  inh.innerHTML = tabel + kaarten;
+}
+function vermoed(o){
+  return !!(o && (o.vermoed_betaald || (o.webshop && o.webshop.vermoed_betaald)));
+}
+function renderChips(){
+  var d = state.data;
+  var counts = {alle:0, wacht:0, gestart:0, betaald:0};
+  (d && d.orders || []).forEach(function(o){
+    var s = String(o.betaal_status||"wacht");
+    counts.alle++; if(counts[s] != null) counts[s]++;
+  });
+  var defs = [["alle","Alle"],["wacht","Wacht"],["gestart","Gestart"],["betaald","Betaald"]];
+  $("filterChips").innerHTML = defs.map(function(x){
+    return '<button class="chip'+(state.filter===x[0]?" actief":"")+'" data-f="'+x[0]+'">'+x[1]+'<span class="n">'+counts[x[0]]+'</span></button>';
+  }).join("") +
+  (DEMO ? '' : ' <a class="chip" id="exportOrders" download="shop_orders.csv" href="'+apiPad("/api/shop/export?type=orders")+'" style="text-decoration:none">⬇ CSV orders</a>');
+  document.querySelectorAll("#filterChips .chip[data-f]").forEach(function(b){
+    b.addEventListener("click", function(){ state.filter = b.dataset.f; renderOrders(); });
+  });
+}
+
+$("zoek").addEventListener("input", function(){
+  state.zoek = this.value;
+  renderOrders();
+});
+document.addEventListener("click", function(e){
+  var rij = e.target.closest ? e.target.closest("[data-num]") : null;
+  if(rij && (rij.classList.contains("mkaart") || rij.tagName === "TR")) openDrawer(+rij.dataset.num);
+});
+
+/* ================= klanten ================= */
+function renderKlanten(){
+  var inh = $("klInhoud");
+  if(state.fout && !state.data){ inh.innerHTML = foutMelding(); return; }
+  var klanten = (state.data && state.data.customers) || [];
+  if(!klanten.length){ inh.innerHTML = '<div class="melding"><span class="groot">👥</span>Nog geen klanten.</div>'; return; }
+  var rows = klanten.map(function(k){
+    var m = k.marketing ? '✉️ <span style="color:var(--accent)">✓</span>' : '✉️ <span style="color:var(--sec)">✗</span>';
+    return { k:k, m:m };
+  });
+  var tabel = '<div class="tabelwrap kl"><table style="min-width:640px"><thead><tr>' +
+    '<th>Naam</th><th>E-mail</th><th>Telefoon</th><th>Orders</th><th>Besteed</th><th>Marketing</th>' +
+    '</tr></thead><tbody>' +
+    rows.map(function(r){
+      var k = r.k;
+      return '<tr style="cursor:default"><td style="font-weight:600">'+esc(k.naam||"—")+'</td>' +
+        '<td><a class="mail" href="mailto:'+esc(k.email)+'">'+esc(k.email)+'</a></td>' +
+        '<td style="color:var(--sec)">'+(k.telefoon ? '<a href="tel:'+esc(String(k.telefoon).replace(/ /g,""))+'" style="color:var(--sec)">'+esc(k.telefoon)+'</a>' : "—")+'</td>' +
+        '<td style="font-weight:700">'+(+k.aantal_orders||0)+'</td>' +
+        '<td style="font-weight:700;color:var(--accent)">'+fmtEuro(k.totaal_besteed)+'</td>' +
+        '<td>'+r.m+'</td></tr>';
+    }).join("") +
+    '</tbody></table></div>';
+  var kaarten = '<div class="kl-mobiel">' + rows.map(function(r){
+    var k = r.k;
+    return '<div class="kl-kaart">' +
+      '<div class="r1"><b>'+esc(k.naam||"—")+'</b>'+r.m+'</div>' +
+      '<div class="r2"><a href="mailto:'+esc(k.email)+'">'+esc(k.email)+'</a>'+(k.telefoon?' · <a href="tel:'+esc(String(k.telefoon).replace(/ /g,""))+'" style="color:var(--sec)">'+esc(k.telefoon)+'</a>':'')+'</div>' +
+      '<div class="r3"><span><b>'+(+k.aantal_orders||0)+'</b> order'+((+k.aantal_orders||0)===1?"":"s")+'</span><span>besteed <b style="color:var(--accent)">'+fmtEuro(k.totaal_besteed)+'</b></span></div>' +
+      '</div>';
+  }).join("") + '</div>';
+  var exportK = DEMO ? '' :
+    '<div class="toolbar" style="margin-top:12px"><a class="exportknop" download="shop_klanten.csv" href="'+apiPad("/api/shop/export&type=klanten")+'">⬇ CSV klanten</a></div>';
+  inh.innerHTML = tabel + kaarten + exportK;
+}
+
+/* ================= drawer ================= */
+function openDrawer(num){
+  var o = vindOrder(num);
+  if(!o) return;
+  state.drawerNum = num;
+  tekenDrawer(o);
+  $("drawer").classList.add("open");
+  $("backdrop").classList.add("open");
+  $("drawer").setAttribute("aria-hidden","false");
+}
+function sluitDrawer(){
+  state.drawerNum = null;
+  $("drawer").classList.remove("open");
+  $("backdrop").classList.remove("open");
+  $("drawer").setAttribute("aria-hidden","true");
+}
+$("dSluit").addEventListener("click", sluitDrawer);
+$("backdrop").addEventListener("click", sluitDrawer);
+document.addEventListener("keydown", function(e){ if(e.key === "Escape") sluitDrawer(); });
+
+function vindOrder(num){
+  return ((state.data && state.data.orders) || []).filter(function(o){ return +o.num === +num; })[0] || null;
+}
+
+function tekenDrawer(o){
+  $("dNum").textContent = "#" + o.num;
+  $("dBadges").innerHTML = betaalBadge(o.betaal_status) + statusChip(o.order_status);
+  var items = (o.items||[]).map(function(it){
+    var regelprijs = (Number(it.prijs)||0) * (Number(it.qty)||1);
+    return '<div class="ditem"><span class="t">'+esc(it.titel)+'</span><span class="q">×'+esc(it.qty||1)+'</span><span class="p">'+fmtEuro(regelprijs)+'</span></div>';
+  }).join("");
+  var adv = adresTekst(o.adres);
+  var email = o.email ? '<div class="dregel">✉️ <a href="mailto:'+esc(o.email)+'">'+esc(o.email)+'</a></div>' : "";
+  var tel = o.telefoon ? '<div class="dregel">📞 <a href="tel:'+esc(String(o.telefoon).replace(/ /g,""))+'">'+esc(o.telefoon)+'</a></div>' : "";
+  var mark = o.marketing ? '✉️ <span style="color:var(--accent)">✓ wil e-mails</span>' : '✉️ <span style="color:var(--sec)">✗ geen e-mails</span>';
+  var hint = (vermoed(o) && o.betaal_status !== "betaald")
+    ? '<div class="hintbox">💡 Vermoed betaald — check je Basetao-wallet en markeer dan pas als betaald.</div>' : "";
+  var notitie = o.notitie ? '<div><div class="dsec"><div class="dlabel">Notitie / maat</div><div class="notitie" style="background:none;border:none;padding:0">'+esc(o.notitie)+'</div></div></div>' : "";
+
+  $("dLijf").innerHTML = hint +
+    '<div class="dsec"><div class="dlabel">Klant</div><div class="dnaam">'+esc(o.naam||"—")+'</div>'+email+tel+
+      (adv ? '<div class="dregel">📍 '+esc(adv)+'</div>' : "") +
+      '<div class="dregel">'+mark+'</div></div>' +
+    '<div class="dsec"><div class="dlabel">Items</div>'+items+
+      '<div class="dtotaal"><span>Totaal</span><span class="b">'+fmtEuro(o.totaal)+'</span></div></div>' +
+    notitie +
+    '<div style="color:var(--sec);font-size:.75rem;text-align:center">binnenkomst '+esc(fmtLang(o.created))+' · laatst gewijzigd '+esc(fmtLang(o.updated))+'</div>';
+
+  // acties
+  var knoppen = [];
+  if(o.betaal_status !== "betaald"){
+    knoppen.push('<button class="aknop hoofd breed" data-actie="betaald">✅ Markeer betaald'+(vermoed(o)?" (check wallet)":"")+'</button>');
+  }
+  knoppen.push('<button class="aknop" data-actie="besteld">📦 Besteld</button>');
+  knoppen.push('<button class="aknop" data-actie="onderweg">🚚 Onderweg</button>');
+  knoppen.push('<button class="aknop" data-actie="binnen">📥 Binnen</button>');
+  knoppen.push('<button class="aknop" data-actie="klaar">✅ Klaar</button>');
+  knoppen.push('<button class="aknop gevaar breed" data-actie="annuleren">🗑 Annuleren</button>');
+  $("dActies").innerHTML = knoppen.join("");
+  document.querySelectorAll("#dActies .aknop").forEach(function(b){
+    b.addEventListener("click", function(){ doeActie(o, b.dataset.actie); });
+  });
+}
+
+/* ================= acties ================= */
+function doeActie(o, actie){
+  if(state.actieBezig) return;
+  if(actie === "annuleren" && !confirm("Order #"+o.num+" van "+(o.naam||"?")+" annuleren?")) return;
+  state.actieBezig = true;
+  document.querySelectorAll("#dActies .aknop").forEach(function(b){ b.disabled = true; });
+  if(DEMO){
+    setTimeout(function(){
+      if(actie === "betaald"){ o.betaal_status = "betaald"; o.order_status = "te_bestellen"; }
+      else if(actie === "annuleren"){ o.order_status = "geen_interesse"; }
+      else { o.order_status = actie; }
+      o.updated = nieuwTs();
+      state.actieBezig = false;
+      syncDemoAnalytics();
+      renderAlles();
+      var o2 = vindOrder(o.num);
+      if(o2 && state.drawerNum === o.num) tekenDrawer(o2);
+      toast("✅ bijgewerkt", "ok");
+    }, 350);
+    return;
+  }
+  fetch(apiPad("/api/shop/order/" + o.num), {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({action: actie})
+  }).then(function(r){ return r.json().then(function(j){ return {status:r.status, j:j}; }, function(){ return {status:r.status, j:null}; }); })
+  .then(function(res){
+    state.actieBezig = false;
+    if(res.status === 200 && res.j && res.j.ok){
+      toast("✅ bijgewerkt", "ok");
+      return laad(true).then(function(){
+        var o2 = vindOrder(o.num);
+        if(o2 && state.drawerNum === o.num) tekenDrawer(o2); else if(!o2) sluitDrawer();
+      });
+    }
+    var msg = (res.j && res.j.error) || ("HTTP " + res.status);
+    document.querySelectorAll("#dActies .aknop").forEach(function(b){ b.disabled = false; });
+    toast("❌ " + msg, "err");
+  })
+  .catch(function(){
+    state.actieBezig = false;
+    document.querySelectorAll("#dActies .aknop").forEach(function(b){ b.disabled = false; });
+    toast("❌ Server niet bereikbaar", "err");
+  });
+}
+function nieuwTs(){
+  var d = new Date(), p = function(x){ return ("0"+x).slice(-2); };
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+}
+/* demo: analytics netjes mee laten lopen na een actie */
+function syncDemoAnalytics(){
+  var d = state.data; if(!d) return;
+  var orders = d.orders || [];
+  var tot = 0, betaald = 0, nb = 0;
+  orders.forEach(function(o){ tot += +o.totaal||0; if(o.betaal_status==="betaald"){ betaald += +o.totaal||0; nb++; } });
+  var a = d.analytics;
+  a.omzet_betaald = betaald; a.omzet_open = tot - betaald;
+  a.aantal_orders = orders.length;
+  a.gem_orderwaarde = orders.length ? Math.round(tot/orders.length*100)/100 : 0;
+  a.betaald_pct = orders.length ? Math.round(nb/orders.length*1000)/10 : 0;
+  var dag = {};
+  orders.forEach(function(o){
+    var k = String(o.created||"").slice(0,10); if(!k) return;
+    var r = dag[k] || (dag[k] = {omzet_betaald:0, orders:0});
+    r.orders++; if(o.betaal_status==="betaald") r.omzet_betaald += +o.totaal||0;
+  });
+  (a.per_dag||[]).forEach(function(p){ var r = dag[p.dag]||{omzet_betaald:0,orders:0};
+    p.omzet_betaald = r.omzet_betaald; p.orders = r.orders; });
+}
+
+/* ================= opstart ================= */
+(function init(){
+  if(DEMO){
+    state.data = demoData();
+    state.key = "demo";
+    openApp();
+    return;
+  }
+  var urlKey = QS.get("key");
+  var lsKey = null;
+  try{ lsKey = localStorage.getItem(LS_KEY); }catch(e){}
+  if(urlKey){
+    state.key = urlKey.trim();
+    try{ localStorage.setItem(LS_KEY, state.key); }catch(e){}
+    // URL opruimen: key uit adresbalk (history.replaceState)
+    try{
+      QS.delete("key");
+      var nieuw = location.pathname + (QS.toString() ? "?" + QS.toString() : "");
+      history.replaceState(null, "", nieuw);
+    }catch(e){}
+    openApp();
+  } else if(lsKey){
+    state.key = lsKey;
+    openApp();
+  } else {
+    startKeyScherm();
+  }
+})();
+
+/* grafiek opnieuw tekenen bij resize */
+var rsTimer = null;
+window.addEventListener("resize", function(){
+  clearTimeout(rsTimer);
+  rsTimer = setTimeout(function(){
+    if(state.tab === "overzicht" && state.data){
+      var a = state.data.analytics || {};
+      var gw = $("grafiekWrap");
+      if(gw) gw.innerHTML = grafiekSvg(a.per_dag || []);
+    }
+  }, 150);
+});
+</script>
+</body>
+</html>
