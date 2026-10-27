@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0f0e">
+<title>Orderstatus — YZ Store</title>
+<style>
+  :root{
+    --bg:#0b0f0e;
+    --paneel:#171a1b;
+    --accent:#d7ff3f;
+    --tekst:#eef2f0;
+    --grijs:#a2a9a3;
+    --rand:#262b2d;
+    --veld:#101413;
+    --rood:#ff6b62;
+    --oranje:#ffb35c;
+    --wa:#25d366;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{background:var(--bg);color:var(--tekst);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;min-height:100vh;line-height:1.45}
+  .verberg{display:none !important}
+  a{color:var(--accent)}
+
+  header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;padding:10px 14px;background:#121516;border-bottom:1px solid var(--rand)}
+  .logo{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#10130a;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
+  .kop h1{font-size:15.5px;font-weight:700;line-height:1.15}
+  .kop span{font-size:12px;color:var(--grijs)}
+  .test-badge{margin-left:auto;background:var(--oranje);color:#231a08;font-weight:800;font-size:11px;padding:3px 9px;border-radius:999px;letter-spacing:.5px}
+
+  main{max-width:560px;margin:0 auto;padding:16px 14px calc(30px + env(safe-area-inset-bottom))}
+  .paneel{background:var(--paneel);border:1px solid var(--rand);border-radius:12px;padding:16px;margin-bottom:14px}
+  h2{font-size:16px;margin-bottom:12px}
+  .grijs{color:var(--grijs)}
+  .klein{font-size:12.5px}
+  .centrum{text-align:center;padding:30px 16px}
+  .emoji{font-size:38px;margin-bottom:8px}
+
+  .orderTitel{font-size:21px;font-weight:800;letter-spacing:-.3px}
+  .bedankt{color:var(--grijs);font-size:13.5px;margin-top:3px}
+
+  /* items */
+  .mandRij{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed #23282a}
+  .mandInfo{flex:1;min-width:0}
+  .mandInfo strong{display:block;font-size:14px;line-height:1.3;overflow-wrap:anywhere}
+  .mandPrijs{font-weight:700;font-size:14px;flex:none}
+  .totaalRij{display:flex;justify-content:space-between;align-items:baseline;margin-top:12px}
+  .totaalRij span{color:var(--grijs);font-size:14px}
+  .totaalRij strong{font-size:24px;color:var(--accent);letter-spacing:-.5px}
+
+  /* banners */
+  .wachtBanner,.annuleerBanner{
+    display:flex;gap:9px;align-items:flex-start;border-radius:10px;
+    padding:11px 12px;font-size:13.5px;font-weight:600;margin-bottom:12px;overflow-wrap:anywhere;
+  }
+  .wachtBanner{background:rgba(255,179,92,.12);border:1px solid rgba(255,179,92,.4);color:var(--oranje)}
+  .annuleerBanner{background:rgba(255,107,98,.12);border:1px solid rgba(255,107,98,.45);color:var(--rood)}
+
+  /* tijdlijn (verticaal) */
+  .tijdlijn{list-style:none;margin-top:4px}
+  .tijdlijn li{position:relative;display:flex;gap:12px;padding:0 0 20px 0}
+  .tijdlijn li:last-child{padding-bottom:2px}
+  .tijdlijn li::before{content:"";position:absolute;left:12px;top:28px;bottom:-2px;width:2px;background:#23282a}
+  .tijdlijn li:last-child::before{display:none}
+  .dot{
+    flex:none;width:26px;height:26px;border-radius:50%;border:2px solid #343a3c;background:var(--veld);
+    display:flex;align-items:center;justify-content:center;position:relative;z-index:1;
+  }
+  .dot::after{content:"";line-height:1}
+  .tijdlijn li.klaar .dot{background:var(--accent);border-color:var(--accent)}
+  .tijdlijn li.klaar .dot::after{content:"\2713";color:#10130a;font-size:14px;font-weight:900}
+  .tijdlijn li.nu .dot{border-color:var(--accent);animation:pols 1.6s ease-out infinite}
+  .tijdlijn li.nu .dot::after{content:"";display:block;width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  @keyframes pols{
+    0%{box-shadow:0 0 0 0 rgba(215,255,63,.35)}
+    70%{box-shadow:0 0 0 8px rgba(215,255,63,0)}
+    100%{box-shadow:0 0 0 0 rgba(215,255,63,0)}
+  }
+  .stapNaam{font-weight:700;font-size:14.5px;line-height:1.25;padding-top:2px}
+  .stapSub{font-size:12px;color:var(--grijs)}
+  .tijdlijn li:not(.klaar):not(.nu) .stapNaam{color:var(--grijs)}
+
+  .versie{margin-top:4px}
+  .waKop{margin-top:2px}
+
+  .wa-knop{
+    display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+    background:var(--wa);color:#08130b;font-weight:800;border-radius:12px;
+    padding:14px 16px;font-size:15px;text-decoration:none;
+  }
+  .wa-knop:active{transform:translateY(1px)}
+  .foutScherm .wa-knop{margin-top:16px}
+
+  .spinner{width:36px;height:36px;border-radius:50%;border:4px solid #2a2f31;border-top-color:var(--accent);animation:draai .8s linear infinite;margin:12px auto}
+  @keyframes draai{to{transform:rotate(360deg)}}
+  .test-notitie{margin-top:14px;background:rgba(255,179,92,.12);border:1px solid rgba(255,179,92,.4);color:var(--oranje);border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">YZ</div>
+  <div class="kop"><h1>YZ Store</h1><span>Orderstatus</span></div>
+  <span id="testBadge" class="test-badge verberg">TEST</span>
+</header>
+
+<main>
+
+  <!-- laden -->
+  <section id="laadScherm" class="paneel centrum">
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="grijs">Order laden&hellip;</p>
+  </section>
+
+  <!-- fout -->
+  <section id="foutScherm" class="paneel centrum verberg">
+    <div class="emoji">&#128274;</div>
+    <h2 id="foutTitel">Geen toegang tot deze order</h2>
+    <p class="grijs" id="foutTekst">Deze link klopt niet (meer).</p>
+    <a id="foutWa" class="wa-knop" href="https://wa.me/31684805378" target="_blank" rel="noopener">&#128172; Vraag het via WhatsApp</a>
+  </section>
+
+  <!-- order -->
+  <section id="statusHoofd" class="verberg">
+
+    <div class="paneel">
+      <div class="orderTitel" id="kopNum">Order #&hellip;</div>
+      <p class="bedankt" id="bedankt"></p>
+    </div>
+
+    <div class="paneel">
+      <h2>Je bestelling</h2>
+      <div id="statusItems"></div>
+      <div class="totaalRij"><span>Totaal</span><strong id="statusTotaal">&euro; 0,00</strong></div>
+      <p class="grijs klein" style="margin-top:2px">incl. verzending (NL)</p>
+    </div>
+
+    <div class="paneel">
+      <h2>Status</h2>
+      <div id="wachtBanner" class="wachtBanner verberg"><span id="wachtTekst"></span></div>
+      <div id="annuleerBanner" class="annuleerBanner verberg">Deze bestelling is geannuleerd. Vragen? App gerust.</div>
+      <ol id="tijdlijn" class="tijdlijn">
+        <li>
+          <span class="dot" aria-hidden="true"></span>
+          <div><div class="stapNaam">Betaald</div><div class="stapSub">betaling via iDEAL ontvangen</div></div>
+        </li>
+        <li>
+          <span class="dot" aria-hidden="true"></span>
+          <div><div class="stapNaam">Besteld</div><div class="stapSub">bij onze leverancier</div></div>
+        </li>
+        <li>
+          <span class="dot" aria-hidden="true"></span>
+          <div><div class="stapNaam">Onderweg</div><div class="stapSub">naar jou verzonden</div></div>
+        </li>
+        <li>
+          <span class="dot" aria-hidden="true"></span>
+          <div><div class="stapNaam">Binnen</div><div class="stapSub">klaar / af te halen</div></div>
+        </li>
+      </ol>
+      <p class="grijs klein versie" id="versie"></p>
+    </div>
+
+    <a id="waKnop" class="wa-knop waKop" href="https://wa.me/31684805378" target="_blank" rel="noopener">&#128172; Vraag over deze order</a>
+
+    <p id="testNotitie" class="test-notitie verberg" style="margin-top:14px">TEST-modus: voorbeeld-data, geen live order.</p>
+
+  </section>
+
+</main>
+
+<script>
+'use strict';
+(function () {
+
+  var params = new URLSearchParams(window.location.search);
+  var TEST1 = params.get("test") === "1";   // betaald + onderweg
+  var TEST2 = params.get("test") === "2";   // wacht op betaling
+  var TESTFOUT = params.get("test") === "fout";
+
+  var num = "";
+  var tok = params.get("t") || "";
+
+  if (TEST1 || TEST2 || TESTFOUT) {
+    num = "123";
+  } else {
+    var delen = window.location.pathname.split("/").filter(Boolean);
+    num = delen.length ? delen[delen.length - 1] : "";
+  }
+
+  // Ingebouwde voorbeeld-JSON voor de test-modus (zelfde vorm als
+  // GET /shop/order/<num>?t=<token> met Accept: application/json)
+  var TEST_ITEMS = [
+    { id: "p3", titel: "Shirt Custom Ajax — Rug 10", prijs: 30, qty: 2 },
+    { id: "p1", titel: "Hoodie Essentieel Zwart", prijs: 48, qty: 1 }
+  ];
+  var TESTDATA1 = { ok: true, order: {
+    num: 123, naam: "Younes", items: TEST_ITEMS, totaal: 108,
+    betaal_status: "betaald", order_status: "onderweg",
+    updated: "2026-10-27 14:32:10" } };
+  var TESTDATA2 = { ok: true, order: {
+    num: 123, naam: "Younes", items: TEST_ITEMS, totaal: 108,
+    betaal_status: "wacht", order_status: "te_bestellen",
+    updated: "2026-10-27 14:32:10" } };
+
+  function el(id) { return document.getElementById(id); }
+
+  function euro(bedrag) {
+    var n = Number(bedrag) || 0;
+    return "\u20AC " + n.toFixed(2).replace(".", ",");
+  }
+
+  function ontsnap(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function toon(el_) { el_.classList.remove("verberg"); }
+  function verberg(el_) { el_.classList.add("verberg"); }
+
+  function tijdNu() {
+    var d = new Date();
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+
+  function toonFout(titel, tekst) {
+    verberg(el("laadScherm"));
+    verberg(el("statusHoofd"));
+    el("foutTitel").textContent = titel;
+    el("foutTekst").textContent = tekst;
+    if (num && /^\d+$/.test(num)) {
+      el("foutWa").href = "https://wa.me/31684805378?text=" +
+        encodeURIComponent("Vraag over order #" + num);
+    }
+    toon(el("foutScherm"));
+  }
+
+  // ---------- status-logica ----------
+  // order_status -> stap: te_bestellen/besteld->Besteld, onderweg->Onderweg,
+  // binnen/verpakken/klaar->Binnen. betaal_status "betaald" = stap 1 aan.
+  function berekenStappen(order) {
+    var betaald = order.betaal_status === "betaald";
+    var s = String(order.order_status || "");
+    var klaarTot = 0;  // aantal stappen klaar
+    var nu = 0;        // stap die bezig is (0 = geen)
+    if (betaald) {
+      if (s === "te_bestellen") { klaarTot = 1; nu = 2; }
+      else if (s === "besteld") { klaarTot = 2; nu = 3; }
+      else if (s === "onderweg") { klaarTot = 3; nu = 4; }
+      else if (s === "binnen" || s === "verpakken" || s === "klaar") { klaarTot = 4; }
+    }
+    return { betaald: betaald, klaarTot: klaarTot, nu: nu };
+  }
+
+  function render(data) {
+    var o = (data && data.order) || {};
+    var naam = String(o.naam || "").trim();
+
+    verberg(el("laadScherm"));
+    verberg(el("foutScherm"));
+    toon(el("statusHoofd"));
+
+    el("kopNum").textContent = "Order #" + o.num;
+    el("bedankt").textContent = "Bedankt" + (naam ? " " + naam : "") +
+      "! Hieronder zie je de actuele status van je bestelling.";
+
+    var html = "";
+    (o.items || []).forEach(function (it) {
+      var prijs = Number(it.prijs) || 0;
+      var qty = Number(it.qty) || 1;
+      html += '<div class="mandRij">' +
+        '<div class="mandInfo"><strong>' + ontsnap(it.titel) + '</strong>' +
+        '<span class="grijs klein">' + qty + ' &times; ' + euro(prijs) + '</span></div>' +
+        '<span class="mandPrijs">' + euro(prijs * qty) + '</span></div>';
+    });
+    el("statusItems").innerHTML = html;
+    el("statusTotaal").textContent = euro(Number(o.totaal) || 0);
+
+    var stappen = berekenStappen(o);
+    var s = String(o.order_status || "");
+
+    // banners
+    if (s === "geen_interesse") {
+      toon(el("annuleerBanner"));
+      verberg(el("wachtBanner"));
+      verberg(el("tijdlijn"));
+    } else {
+      verberg(el("annuleerBanner"));
+      if (!stappen.betaald) {
+        el("wachtTekst").textContent = (o.betaal_status === "gestart")
+          ? "\u23F3 Betaling gestart \u2014 nog niet afgerond. Rond je iDEAL-betaling af, dan start je bestelling."
+          : "\u23F3 Wacht op betaling \u2014 zodra je iDEAL-betaling binnen is, gaat je bestelling van start.";
+        toon(el("wachtBanner"));
+      } else {
+        verberg(el("wachtBanner"));
+      }
+      toon(el("tijdlijn"));
+    }
+
+    // stappen zetten
+    var liLijst = el("tijdlijn").querySelectorAll("li");
+    for (var i = 0; i < liLijst.length; i++) {
+      var stap = i + 1;
+      liLijst[i].classList.toggle("klaar", stap <= stappen.klaarTot);
+      liLijst[i].classList.toggle("nu", stap === stappen.nu);
+    }
+
+    el("versie").textContent = "Verversen elke 20 sec \u00B7 laatst om " + tijdNu();
+
+    el("waKnop").href = "https://wa.me/31684805378?text=" +
+      encodeURIComponent("Vraag over order #" + o.num);
+  }
+
+  // ---------- ophalen ----------
+  var eersteKeer = true;
+
+  function ververs() {
+    if (TESTFOUT) { toonFout("Geen toegang tot deze order",
+      "Deze link klopt niet (meer). Gebruik de link uit je bevestigingsmail of chat."); return; }
+    if (TEST1 || TEST2) { render(TEST1 ? TESTDATA1 : TESTDATA2); return; }
+
+    if (!num || !/^\d+$/.test(num)) {
+      toonFout("Ongeldige link", "Deze order-link klopt niet. Gebruik de link uit je bevestiging.");
+      return;
+    }
+    fetch("/shop/order/" + encodeURIComponent(num) +
+          "?t=" + encodeURIComponent(tok) + "&r=" + Date.now(), {
+      headers: { "Accept": "application/json" }
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (data) {
+        return { status: r.status, data: data };
+      });
+    }).then(function (res) {
+      if (res.status === 200 && res.data && res.data.ok) {
+        render(res.data);
+      } else if (res.status === 403) {
+        toonFout("Geen toegang tot deze order",
+          (res.data && res.data.error) ||
+          "Deze link klopt niet (meer). Gebruik de link uit je bevestigingsmail of chat.");
+      } else if (res.status === 404) {
+        toonFout("Order niet gevonden",
+          (res.data && res.data.error) || "Deze bestelling bestaat niet (meer).");
+      } else if (eersteKeer) {
+        toonFout("Er ging iets mis", "Kon de order niet laden. Ververs de pagina om het opnieuw te proberen.");
+      }
+      // bij auto-refresh na een eerdere load: laatste stand gewoon laten staan
+    }).catch(function () {
+      if (eersteKeer) {
+        toonFout("Geen verbinding",
+          "Kon de order niet laden. Check je internetverbinding en ververs de pagina.");
+      }
+    }).then(function () {
+      eersteKeer = false;
+    });
+  }
+
+  // Start + auto-refresh elke 20 sec
+  if (TEST1 || TEST2 || TESTFOUT) { toon(el("testBadge")); }
+  ververs();
+  window.setInterval(ververs, 20000);
+})();
+</script>
+</body>
+</html>
