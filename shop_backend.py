@@ -175,6 +175,12 @@ def shop_intent_get(intent_id: str):
 
 # ---------------- publiek: checkout-formulier + order + betaling ----------------
 
+@router.get("/shop-dashboard", include_in_schema=False)
+def shop_dashboard():
+    # Shopify-achtig beheer; achter de access_gate van app.py (pad staat in de gate-lijst)
+    return _winkel_page("shop_dashboard.html")
+
+
 @router.get("/shop/checkout", include_in_schema=False)
 def shop_checkout():
     # formulier-pagina van de frontend; bestaat nog niet -> placeholder
