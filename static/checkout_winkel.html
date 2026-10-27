@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0f0e">
+<title>Afrekenen — YZ Store</title>
+<style>
+  :root{
+    --bg:#0b0f0e;
+    --paneel:#171a1b;
+    --accent:#d7ff3f;
+    --tekst:#eef2f0;
+    --grijs:#a2a9a3;
+    --rand:#262b2d;
+    --veld:#101413;
+    --rood:#ff6b62;
+    --oranje:#ffb35c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{background:var(--bg);color:var(--tekst);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;min-height:100vh;line-height:1.45}
+  .verberg{display:none !important}
+  button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+  button:disabled{cursor:not-allowed}
+
+  header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;padding:10px 14px;background:#121516;border-bottom:1px solid var(--rand)}
+  .logo{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#10130a;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
+  .kop h1{font-size:15.5px;font-weight:700;line-height:1.15}
+  .kop span{font-size:12px;color:var(--grijs)}
+  .test-badge{margin-left:auto;background:var(--oranje);color:#231a08;font-weight:800;font-size:11px;padding:3px 9px;border-radius:999px;letter-spacing:.5px}
+
+  main{max-width:560px;margin:0 auto;padding:16px 14px calc(30px + env(safe-area-inset-bottom))}
+  .paneel{background:var(--paneel);border:1px solid var(--rand);border-radius:12px;padding:16px;margin-bottom:14px}
+  h2{font-size:16px;margin-bottom:12px}
+  .grijs{color:var(--grijs)}
+  .klein{font-size:12.5px}
+  .centrum{text-align:center;padding:30px 16px}
+  .emoji{font-size:38px;margin-bottom:8px}
+
+  /* mandje-samenvatting */
+  .mandRij{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed #23282a}
+  .mandInfo{flex:1;min-width:0}
+  .mandInfo strong{display:block;font-size:14px;line-height:1.3;overflow-wrap:anywhere}
+  .mandPrijs{font-weight:700;font-size:14px;flex:none}
+  .totaalRij{display:flex;justify-content:space-between;align-items:baseline;margin-top:14px}
+  .totaalRij span{color:var(--grijs);font-size:14px}
+  .totaalRij strong{font-size:27px;color:var(--accent);letter-spacing:-.5px}
+
+  /* formulier */
+  .veld{margin-bottom:12px}
+  .veld label{display:block;font-size:12.5px;font-weight:600;color:var(--grijs);margin-bottom:5px}
+  .ster{color:var(--accent)}
+  .veld input,.veld select,.veld textarea{
+    width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--rand);
+    background:var(--veld);color:var(--tekst);font:inherit;font-size:15px;outline:none;
+    transition:border-color .15s;
+  }
+  .veld input:focus,.veld select:focus,.veld textarea:focus{border-color:var(--accent)}
+  .veld textarea{resize:vertical;min-height:74px}
+  .veld select{
+    -webkit-appearance:none;appearance:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23a2a9a3' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 12px center;padding-right:34px;
+  }
+  .rij{display:flex;gap:10px}
+  .rij .veld{flex:1;min-width:0}
+  .rij .huisnr{flex:0 0 96px}
+  .rij .postcode{flex:0 0 118px}
+  .slecht{border-color:var(--rood) !important}
+  .foutTekst{color:var(--rood);font-size:12.5px;margin-top:5px;font-weight:600}
+  .hintRegel{color:var(--grijs);font-size:12px;margin-top:5px}
+
+  .check{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;margin:4px 0 16px;cursor:pointer}
+  .check input{width:19px;height:19px;accent-color:var(--accent);margin-top:1px;flex:none}
+
+  .serverFout{
+    background:rgba(255,107,98,.12);border:1px solid rgba(255,107,98,.45);
+    color:var(--rood);border-radius:10px;padding:10px 12px;font-size:13.5px;
+    font-weight:600;margin-bottom:12px;overflow-wrap:anywhere;
+  }
+
+  .knop{display:inline-block;text-align:center;text-decoration:none;border:none;cursor:pointer;font:inherit}
+  .knop.accent{
+    display:block;width:100%;background:var(--accent);color:#10130a;font-weight:800;
+    border-radius:12px;padding:14px 16px;font-size:15.5px;
+  }
+  .knop.accent:disabled{opacity:.55}
+  .knop.accent:not(:disabled):active{transform:translateY(1px)}
+  .veilig{margin-top:10px;text-align:center}
+
+  .spinner{width:36px;height:36px;border-radius:50%;border:4px solid #2a2f31;border-top-color:var(--accent);animation:draai .8s linear infinite;margin:12px auto}
+  @keyframes draai{to{transform:rotate(360deg)}}
+  .test-notitie{margin-top:14px;background:rgba(255,179,92,.12);border:1px solid rgba(255,179,92,.4);color:var(--oranje);border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600}
+  .foutScherm .knop{margin-top:16px;display:inline-block;width:auto;padding:12px 22px}
+
+  @media (max-width:360px){
+    .rij .huisnr{flex:0 0 82px}
+    .rij .postcode{flex:0 0 104px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">YZ</div>
+  <div class="kop"><h1>YZ Store</h1><span>Afrekenen</span></div>
+  <span id="testBadge" class="test-badge verberg">TEST</span>
+</header>
+
+<main>
+
+  <!-- laden -->
+  <section id="laadScherm" class="paneel centrum">
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="grijs">Bestelling laden&hellip;</p>
+  </section>
+
+  <!-- fout / verlopen -->
+  <section id="foutScherm" class="paneel centrum verberg">
+    <div class="emoji">&#128336;</div>
+    <h2 id="foutTitel">Je sessie is verlopen</h2>
+    <p class="grijs" id="foutTekst">Deze bestelling is verlopen of bestaat niet meer.</p>
+    <a class="knop accent" href="https://yz-demo.onrender.com">Terug naar de winkel</a>
+  </section>
+
+  <!-- mandje + formulier -->
+  <section id="bestelScherm" class="verberg">
+
+    <div class="paneel">
+      <h2>Je bestelling</h2>
+      <div id="mandItems"></div>
+      <div class="totaalRij"><span>Totaal</span><strong id="mandTotaal">&euro; 0,00</strong></div>
+      <p class="grijs klein" style="margin-top:2px">incl. verzending (NL)</p>
+    </div>
+
+    <form id="bestelForm" class="paneel" novalidate>
+      <h2>Jouw gegevens</h2>
+
+      <div class="veld">
+        <label for="fNaam">Naam <span class="ster">*</span></label>
+        <input id="fNaam" type="text" autocomplete="name" placeholder="Voor- en achternaam">
+        <p id="eNaam" class="foutTekst verberg">Vul je naam in.</p>
+      </div>
+
+      <div class="veld">
+        <label for="fEmail">E-mail <span class="ster">*</span></label>
+        <input id="fEmail" type="email" autocomplete="email" inputmode="email" placeholder="jouw@email.nl">
+        <p class="hintRegel">Voor je orderbevestiging en statusupdates.</p>
+        <p id="eEmail" class="foutTekst verberg">Vul een geldig e-mailadres in (met @ en punt).</p>
+      </div>
+
+      <div class="veld">
+        <label for="fTel">Telefoon</label>
+        <input id="fTel" type="tel" autocomplete="tel" inputmode="tel" placeholder="06 12345678">
+      </div>
+
+      <div class="rij">
+        <div class="veld">
+          <label for="fStraat">Straat <span class="ster">*</span></label>
+          <input id="fStraat" type="text" autocomplete="address-line1">
+          <p id="eStraat" class="foutTekst verberg">Vul je straat in.</p>
+        </div>
+        <div class="veld huisnr">
+          <label for="fHuisnr">Huisnr. <span class="ster">*</span></label>
+          <input id="fHuisnr" type="text" autocomplete="address-line2" placeholder="12a">
+          <p id="eHuisnr" class="foutTekst verberg">Vul je huisnummer in.</p>
+        </div>
+      </div>
+
+      <div class="rij">
+        <div class="veld postcode">
+          <label for="fPostcode">Postcode <span class="ster">*</span></label>
+          <input id="fPostcode" type="text" autocomplete="postal-code" placeholder="2132VT">
+          <p id="ePostcode" class="foutTekst verberg">Vul je postcode in.</p>
+        </div>
+        <div class="veld">
+          <label for="fPlaats">Plaats <span class="ster">*</span></label>
+          <input id="fPlaats" type="text" autocomplete="address-level2">
+          <p id="ePlaats" class="foutTekst verberg">Vul je plaats in.</p>
+        </div>
+      </div>
+
+      <div class="veld">
+        <label for="fLand">Land</label>
+        <select id="fLand" autocomplete="country">
+          <option value="NL" selected>Nederland</option>
+          <option value="BE">Belgi&euml;</option>
+          <option value="DE">Duitsland</option>
+        </select>
+      </div>
+
+      <div class="veld">
+        <label for="fNotitie">Opmerking</label>
+        <textarea id="fNotitie" rows="3" placeholder="bijv. maat, of naam + rugnummer op het shirt"></textarea>
+      </div>
+
+      <label class="check">
+        <input id="fMarketing" type="checkbox" checked>
+        <span>Houd me op de hoogte van acties en nieuwe drops</span>
+      </label>
+
+      <div id="serverFout" class="serverFout verberg" role="alert"></div>
+      <button id="plaatsKnop" class="knop accent" type="submit">Bestellen &amp; betalen met iDEAL</button>
+      <p class="grijs klein veilig">&#128274; Veilig betalen via iDEAL</p>
+    </form>
+
+  </section>
+
+  <!-- succes -->
+  <section id="succesScherm" class="paneel centrum verberg">
+    <div class="emoji">&#9989;</div>
+    <h2>Bestelling geplaatst</h2>
+    <p class="grijs">Je gaat nu naar iDEAL&hellip;</p>
+    <div class="spinner" aria-hidden="true"></div>
+    <p id="testNotitie" class="test-notitie verberg">TEST-modus: er wordt niet echt doorgestuurd.</p>
+  </section>
+
+</main>
+
+<script>
+'use strict';
+(function () {
+
+  var params = new URLSearchParams(window.location.search);
+  var intentId = (params.get("id") || "").trim();
+  var TEST = params.get("test") === "1";
+  var TEST_LEEG = params.get("test") === "leeg";
+
+  // Ingebouwde voorbeeld-JSON voor ?test=1 (zelfde vorm als GET /shop/intent/<id>)
+  var TEST_INTENT = {
+    ok: true,
+    items: [
+      { id: "p3", titel: "Shirt Custom Ajax — Rug 10", prijs: 30, qty: 2 },
+      { id: "p1", titel: "Hoodie Essentieel Zwart", prijs: 48, qty: 1 }
+    ],
+    totaal: 108
+  };
+
+  function el(id) { return document.getElementById(id); }
+
+  function euro(bedrag) {
+    var n = Number(bedrag) || 0;
+    return "\u20AC " + n.toFixed(2).replace(".", ",");
+  }
+
+  function ontsnap(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function toon(el_ ) { el_.classList.remove("verberg"); }
+  function verberg(el_) { el_.classList.add("verberg"); }
+
+  function toonFout(titel, tekst) {
+    verberg(el("laadScherm"));
+    verberg(el("bestelScherm"));
+    verberg(el("succesScherm"));
+    el("foutTitel").textContent = titel;
+    el("foutTekst").textContent = tekst;
+    toon(el("foutScherm"));
+  }
+
+  function toonVerlopen(tekst) {
+    toonFout("Je sessie is verlopen", tekst ||
+      "Deze bestelling is verlopen of bestaat niet meer. Start opnieuw in de winkel.");
+  }
+
+  function toonServerFout(tekst) {
+    var balk = el("serverFout");
+    balk.textContent = tekst;
+    toon(balk);
+  }
+
+  // ---------- mandje ----------
+  function renderIntent(data) {
+    var items = (data && data.items) || [];
+    if (!items.length) { toonVerlopen("Je mandje is leeg. Start opnieuw in de winkel."); return; }
+    var html = "";
+    items.forEach(function (it) {
+      var prijs = Number(it.prijs) || 0;
+      var qty = Number(it.qty) || 0;
+      html += '<div class="mandRij">' +
+        '<div class="mandInfo"><strong>' + ontsnap(it.titel) + '</strong>' +
+        '<span class="grijs klein">' + qty + ' &times; ' + euro(prijs) + '</span></div>' +
+        '<span class="mandPrijs">' + euro(prijs * qty) + '</span></div>';
+    });
+    el("mandItems").innerHTML = html;
+    el("mandTotaal").textContent = euro(Number(data.totaal) || 0);
+    verberg(el("laadScherm"));
+    toon(el("bestelScherm"));
+  }
+
+  // ---------- laden ----------
+  function laadIntent() {
+    if (TEST || TEST_LEEG) { toon(el("testBadge")); }
+    if (TEST_LEEG) { toonVerlopen(); return; }
+    if (TEST) { renderIntent(TEST_INTENT); vulTestFormulier(); return; }
+    if (!intentId) {
+      toonVerlopen("Er is geen bestelling meegegeven — start opnieuw in de winkel.");
+      return;
+    }
+    fetch("/shop/intent/" + encodeURIComponent(intentId), {
+      headers: { "Accept": "application/json" }
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (data) {
+        return { status: r.status, data: data };
+      });
+    }).then(function (res) {
+      if (res.status === 200 && res.data && res.data.ok) {
+        renderIntent(res.data);
+      } else if (res.status === 404) {
+        toonVerlopen((res.data && res.data.error) ||
+          "Deze bestelling is verlopen of bestaat niet meer. Start opnieuw in de winkel.");
+      } else {
+        toonFout("Er ging iets mis",
+          "Kon je bestelling niet laden. Ververs de pagina of start opnieuw in de winkel.");
+      }
+    }).catch(function () {
+      toonFout("Geen verbinding",
+        "Kon de bestelling niet laden. Check je internetverbinding en ververs de pagina.");
+    });
+  }
+
+  // ---------- formulier ----------
+  var VELDEN = [
+    { input: "fNaam",     fout: "eNaam" },
+    { input: "fEmail",    fout: "eEmail" },
+    { input: "fStraat",   fout: "eStraat" },
+    { input: "fHuisnr",   fout: "eHuisnr" },
+    { input: "fPostcode", fout: "ePostcode" },
+    { input: "fPlaats",   fout: "ePlaats" }
+  ];
+
+  function zetVeldFout(inputEl, foutId, slecht) {
+    inputEl.classList.toggle("slecht", slecht);
+    el(foutId).classList.toggle("verberg", !slecht);
+  }
+
+  function valideer() {
+    var email = el("fEmail").value.trim();
+    var ok = true;
+    var eersteSlecht = null;
+    VELDEN.forEach(function (v) {
+      var waarde = el(v.input).value.trim();
+      var conditie = waarde.length > 0;
+      if (v.input === "fEmail") {
+        conditie = waarde.indexOf("@") !== -1 && waarde.indexOf(".") !== -1;
+      }
+      zetVeldFout(el(v.input), v.fout, !conditie);
+      if (!conditie) { ok = false; if (!eersteSlecht) { eersteSlecht = el(v.input); } }
+    });
+    if (eersteSlecht && eersteSlecht.scrollIntoView) {
+      eersteSlecht.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    return ok;
+  }
+
+  VELDEN.forEach(function (v) {
+    el(v.input).addEventListener("input", function () {
+      zetVeldFout(el(v.input), v.fout, false);
+    });
+  });
+
+  function vulTestFormulier() {
+    el("fNaam").value = "Younes (test)";
+    el("fEmail").value = "test@yzshop.nl";
+    el("fTel").value = "06 12345678";
+    el("fStraat").value = "Teststraat";
+    el("fHuisnr").value = "12";
+    el("fPostcode").value = "1234AB";
+    el("fPlaats").value = "Teststad";
+    el("fNotitie").value = "Maat L — rug 10";
+  }
+
+  var bezig = false;
+  var alDoorgestuurd = false;
+
+  function naarSucces(num, isTest) {
+    verberg(el("bestelScherm"));
+    if (isTest) { toon(el("testNotitie")); }
+    toon(el("succesScherm"));
+    window.scrollTo(0, 0);
+    if (isTest) { return; }  // test: NIET echt navigeren
+    window.setTimeout(function () {
+      if (!alDoorgestuurd) {
+        alDoorgestuurd = true;
+        window.location = "/shop/pay/" + num;
+      }
+    }, 1000);
+  }
+
+  function knopNormaal() {
+    bezig = false;
+    var knop = el("plaatsKnop");
+    knop.disabled = false;
+    knop.textContent = "Bestellen & betalen met iDEAL";
+  }
+
+  el("bestelForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    if (bezig) { return; }
+    verberg(el("serverFout"));
+    if (!valideer()) {
+      toonServerFout("Vul de gemarkeerde velden in.");
+      return;
+    }
+    bezig = true;
+    var knop = el("plaatsKnop");
+    knop.disabled = true;
+    knop.textContent = "\u23F3 Bezig\u2026";
+
+    var body = {
+      intent_id: intentId,
+      naam: el("fNaam").value.trim(),
+      email: el("fEmail").value.trim(),
+      telefoon: el("fTel").value.trim(),
+      straat: el("fStraat").value.trim(),
+      huisnr: el("fHuisnr").value.trim(),
+      postcode: el("fPostcode").value.trim(),
+      plaats: el("fPlaats").value.trim(),
+      land: el("fLand").value,
+      notitie: el("fNotitie").value.trim(),
+      marketing: el("fMarketing").checked
+    };
+
+    if (TEST) { naarSucces(123, true); return; }
+
+    fetch("/shop/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (data) {
+        return { status: r.status, data: data };
+      });
+    }).then(function (res) {
+      if (res.status === 200 && res.data && res.data.ok && res.data.num) {
+        naarSucces(res.data.num, false);
+      } else if (res.status === 404) {
+        toonVerlopen((res.data && res.data.error) || null);
+      } else {
+        knopNormaal();
+        toonServerFout((res.data && res.data.error) ||
+          "Er ging iets mis bij het plaatsen van je bestelling. Probeer het opnieuw.");
+      }
+    }).catch(function () {
+      knopNormaal();
+      toonServerFout("Kon geen verbinding maken. Check je internet en probeer het opnieuw.");
+    });
+  });
+
+  // Start
+  laadIntent();
+})();
+</script>
+</body>
+</html>
